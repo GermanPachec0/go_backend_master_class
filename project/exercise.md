@@ -1,191 +1,145 @@
-# Logging
+# HTTP Handler
 
-Logs are your most basic tool to know what happens in production. We aim to build a complex platform, so adding random `fmt.Println` here and there isn't going to cut it.
+With the project setup in place, we can now add a public API to our service.
 
-Imagine someone can't place their food order, and all they see is a generic "something went wrong" message.
-You open the logs, and you see 50,000 lines from five different services, all mixed together.
-How can you tell what happened in that user's request? Which service failed? What was the error?
+We're going to run an HTTP server with endpoints for all the operations.
+These endpoints will be called by the frontend web app, mobile apps, and possibly some internal tools.
 
-We'd better prepare before that happens.
+We'll define the contract as [OpenAPI](https://academy.threedots.tech/knowledge/openapi) schema, generate Go code from it, and expose the first endpoint.
 
-This is the last walkthrough exercise. No code to write yet. That said, the logging infrastructure we set up is worth understanding before you start building on top of it.
+## Project Layout
 
-## Go's slog Package
+Take a look at the `backend/orders/api/http` package.
+This is where we'll keep OpenAPI definitions and HTTP handlers.
 
-Go 1.21 introduced [`log/slog`](https://pkg.go.dev/log/slog), a **structured logging** package in the standard library. Instead of writing plain text like `fmt.Println("error occurred")`, structured logging uses key-value pairs that can be easily parsed by log aggregation tools. This makes it much easier to search, filter, and analyze logs in production.
+The `api` package represents the entry points to the module. It's how other modules or external clients interact with it.
+For now, there's just one entry point: the HTTP API.
 
-The difference looks like this:
+The `api` package is the first *layer* of the module. We'll introduce more layers later.
 
-```bash
-# Unstructured
-2024-01-15 14:23:01 error occurred while processing order
+## OpenAPI-First Design
 
-# Structured (slog)
-[14:23:01.042] ERROR Processing order failed  order_id=ord_123 correlation_id=abc789 error="connection refused"
+Instead of defining the HTTP endpoints in the code, **we're going to define the OpenAPI spec first, then generate Go code from it.**
+
+If you've used [gRPC](https://academy.threedots.tech/knowledge/grpc) with [Protocol Buffers](https://academy.threedots.tech/knowledge/protocol-buffers), this should feel familiar. Instead of a `.proto` file, we have `backend/orders/api/http/openapi.yaml` that describes our endpoints and data models.
+
+We'll use [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) to generate types, interfaces, and routing setup. It handles the marshaling and routing boilerplate, so you can focus on business logic.
+
+**Why OpenAPI-first?**
+
+* The spec becomes your contract. Backend and frontend teams see the same schema.
+* API documentation comes for free (tools like Swagger UI read OpenAPI directly).
+* You regenerate Go code after each change to the API. Breaking changes show up as compile errors, not at runtime. It helps you catch issues before they reach production.
+
+## The oapi-codegen Config
+
+Take a look at the configuration:
+
+{{codeFile "backend/orders/api/http/oapi-codegen.yaml"}}
+
+```yaml
+package: http
+generate:
+  echo-server: true
+  strict-server: true
+  models: true
+output: openapi.gen.go
 ```
 
-One tells you something went wrong. The other tells you what failed, which order, and which request triggered it.
+- `package: http` sets the Go package name for the generated file.
+- `echo-server: true` generates code compatible with the Echo library we use.
+- `strict-server: true` generates **`StrictServerInterface`**, which enforces a strict contract: each method receives a typed request struct and returns a typed response struct (similar to gRPC handlers generated from protobuf). This is the interface you'll implement.
+- `models: true` generates Go structs from the OpenAPI schemas (`Address`, `RegisterCustomer`, `ErrorResponse`, etc.).
+- `output: openapi.gen.go` is the output file name.
 
-Take a look at `Init`:
-
-{{codeFile "backend/common/log/slog.go"}}
+The `go:generate` command lives in `backend/orders/api/http/openapi.go`:
 
 ```go
-func Init(level slog.Level) {
-	opts := &humanslog.Options{
-		HandlerOptions: &slog.HandlerOptions{
-			Level: level,
-		},
-		TimeFormat: "[15:04:05.000]",
-	}
+//go:generate go tool oapi-codegen --config=oapi-codegen.yaml openapi.yaml
+```
 
-	logger := slog.New(humanslog.NewHandler(os.Stderr, opts))
-	slog.SetDefault(logger)
+The `go tool` syntax (Go 1.24+) runs tools declared as dependencies in `go.mod`, so you don't need to install `oapi-codegen` separately.
+
+Run `task gen` from the project root (or `go generate ./...`) to execute this command. It reads `backend/orders/api/http/openapi.yaml` and `oapi-codegen.yaml`, then writes `openapi.gen.go` in the same directory.
+
+## What Gets Generated
+
+After running generation, you'll see a new file: `openapi.gen.go`. It contains hundreds of lines of generated code: request and response types, interfaces, and routing. **Never edit this file.** When the spec changes, just regenerate it.
+
+The key piece is the **`StrictServerInterface`**:
+
+```go
+type StrictServerInterface interface {
+    RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error)
 }
 ```
 
-It sets up the global logger using [humanslog](https://github.com/ThreeDotsLabs/humanslog), a handler that produces colored, human-readable output for local development. In production, you'd switch to a JSON handler for your log aggregation system. For the local environment, human-readable output is good enough.
+That's the interface you need to implement.
 
-Echo has its own logger interface. `EchoSlogAdapter` in `backend/common/echo.go` wraps slog to satisfy it, so all logs (including Echo's internal messages) go through one system.
+As you can see, the exact endpoint signature (`POST /orders/register-customer`) isn't mentioned anywhere.
+We simply trust the generated code to route requests to the right method based on the OpenAPI spec.
 
-## Context-Based Logging
+oapi-codegen also generates response types for each status code defined in the spec. The naming convention is `{OperationID}{StatusCode}JSONResponse`:
 
-Structured output is only half the story. You also need to see all logs from a specific request, so you can understand the full context of what happened before the error occurred.
+- `RegisterCustomer201JSONResponse` for a successful 201 response
+- `RegisterCustomer400JSONResponse` for a 400 bad request
+- `RegisterCustomer409JSONResponse` for a 409 conflict
 
-A simple solution is to generate a request ID and add it as a attribute to every log line.
+Each response type is a Go struct matching the schema defined in the OpenAPI spec.
+For example, `RegisterCustomer201JSONResponse` has a `CustomerUuid` field of type `openapi_types.UUID`.
+Simply return the proper struct, and the generated code handles JSON serialization and HTTP headers.
 
-But how do you get that request ID in every function that needs to log something?
-
-Passing a logger as a function parameter could work, but it clutters every function signature. Worse, you need to pass it through layers that don't care about logging at all, only to reach the function that does.
-
-With context-based logging, the [middleware](https://academy.threedots.tech/knowledge/middleware) adds request-specific attributes to the logger and stores it in `context.Context`, which is passed to many functions by default.
-
-Look at the **`FromContext`/`ToContext`** pair:
-
-{{codeFile "backend/common/log/log.go"}}
-
-```go
-func FromContext(ctx context.Context) *slog.Logger {
-	log, ok := ctx.Value(loggerKey).(*slog.Logger)
-	if ok {
-		return log
-	}
-
-	return slog.Default()
-}
-
-func ToContext(ctx context.Context, logger *slog.Logger) context.Context {
-	return context.WithValue(ctx, loggerKey, logger)
-}
-```
-
-`ToContext` stores a logger in the context. `FromContext` retrieves it, falling back to the default logger if none is found. (Not perfect, but a missing logger won't crash your app this way.)
-
-This works well with a single error handler. `HandleError` in `backend/common/http/echo.go` uses `log.FromContext`, so error logs automatically include all the log attributes. Errors bubble up through functions and get logged once, in a structured format, and with full context.
-
-```go
-func HandleError(err error, c echo.Context) {
-	log.FromContext(c.Request().Context()).With("error", err).Error("HTTP error")
-
-	// (...)
-```
+The return type `RegisterCustomerResponseObject` is an interface, so the compiler won't let you return a type that doesn't match the spec. **This gives you compile-time safety for your HTTP responses.** If you try to return a 204 No Content response but the spec only defines 201, 400, and 409, the code won't compile.
 
 {{tip}}
 
-The context keys in `backend/common/log/ctx.go` use an unexported `ctxKey` type. This is a common Go idiom: because the type is unexported, no other package can accidentally read or overwrite these context values.
+You may have noticed the logging exercise uses `shortuuid` for correlation IDs, while here we use `uuid.New()` from `google/uuid`. These serve different purposes: `shortuuid` generates compact, URL-safe strings good for log correlation. For [entity](https://academy.threedots.tech/knowledge/entity) IDs like customer UUIDs, we use standard UUIDs because they're the universal format for database primary keys and APIs.
 
 {{endtip}}
 
 {{tip}}
 
-There's another approach to this: instead of storing a logger in context, you can implement slog's `Handler` interface to inspect the context at log time. The handler extracts attributes (like the correlation ID) from the context and adds them to every log record. With this approach, you call `slog.InfoContext(ctx, "msg")` and the handler figures out which attributes to add. Both approaches are widely used. We went with storing the logger in context because it's more straightforward and works well for this project.
+There are two generated interfaces: `ServerInterface` and `StrictServerInterface`. You want to implement `StrictServerInterface`.
+
+The "strict" version gives you typed request/response objects instead of raw `echo.Context`. It does JSON parsing, validation, and response encoding for you. You get type safety and less boilerplate.
 
 {{endtip}}
 
-## Correlation ID
+## The Starting Point
 
-A **[Correlation ID](https://academy.threedots.tech/knowledge/correlation-id)** is a unique string that follows a request to other services and systems.
-
-For example, when a user places an order, that action touches the orders service, the inventory service, and the payments service (and possibly others).
-Each service has its own logs, so it's pretty much impossible to understand the full story of what happened by looking at them separately.
-
-With a correlation ID, you search for one string and get the complete picture across every service. You'll see this in action throughout the training: when something fails in your exercises, the correlation ID in the logs will help you trace what happened.
-
-Here's how the correlation ID flows through the system:
-
-1. An HTTP request arrives. The middleware extracts the `Correlation-ID` header or generates a new one.
-2. The ID is stored in the request context, and a `correlation_id` attribute is added to the logger.
-3. When the service makes outgoing HTTP requests, it injects the same ID into the `Correlation-ID` header.
-4. All log lines from all services include the `correlation_id`, making it trivial to get a complete trace of the request.
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant MW as HTTP Middleware
-    participant Ctx as Request Context<br/>+ Logger
-    participant Handler as HTTP Handler
-    participant Svc2 as Another Service
-
-    Client->>MW: HTTP Request<br/>Correlation-ID: abc-123
-
-    Note over MW: ① Extract Correlation-ID header<br/>or generate a new one
-
-    MW->>Ctx: ② Store ID in context<br/>Add correlation_id to logger
-
-    Ctx->>Handler: Process request
-    Note over Handler: ④ log.Info("processing order")<br/>→ correlation_id=abc-123
-
-    Handler->>Svc2: ③ Outgoing HTTP request<br/>Correlation-ID: abc-123
-    Note over Svc2: ④ log.Info("reserving stock")<br/>→ correlation_id=abc-123
-
-    Svc2-->>Handler: Response
-    Handler-->>Client: Response
-```
-
-Check `backend/common/log/correlation.go`. It uses [shortuuid](https://github.com/lithammer/shortuuid) for compact, URL-safe IDs.
+Right now, `backend/orders/api/http/handler.go` contains an empty `Handler` struct and a `Register` function that does nothing:
 
 ```go
-func CorrelationIDFromContext(ctx context.Context) string {
-	v, ok := ctx.Value(correlationIDKey).(string)
-	if ok {
-		return v
-	}
+type Handler struct{}
 
-	FromContext(ctx).Warn("correlation ID not found in context")
+func NewHandler() Handler {
+	return Handler{}
+}
 
-	return "gen_" + shortuuid.New()
+func Register(ctx context.Context, e common.EchoRouter, handler Handler) error {
+	return nil
 }
 ```
 
-When `CorrelationIDFromContext` can't find a correlation ID in the context, it generates one prefixed with `gen_`. If you see `gen_` IDs in production logs, something upstream isn't propagating the correlation ID correctly. The prefix makes this immediately visible.
+The `Handler` doesn't implement any endpoints yet, and the `Register` function register anything. Your job is to add the `RegisterCustomer` method and wire it up.
+
+## Wiring the Handler
+
+The wiring takes two lines. In your `Register` function, call `RegisterHandlers` with a strict handler wrapper:
+
+```go
+RegisterHandlers(e, NewStrictHandler(handler, nil))
+```
 
 {{tip}}
 
-In distributed systems, **[distributed tracing](https://academy.threedots.tech/knowledge/tracing)** (e.g., OpenTelemetry) is the modern replacement for correlation IDs. A trace ID replaces the correlation ID, and span IDs show the exact operation within a service.
-You get the same cross-service visibility, plus timing, hierarchy, and error propagation.
-We cover tracing in our [Go Event-Driven](https://threedots.tech/event-driven/) training, where it truly shines.
-For a monolith, correlation IDs are a good starting point.
+We generate the `openapi.yaml` spec for you in this training, so you don't need to learn OpenAPI syntax right now. In real projects, we recommend writing the spec by hand or using AI to help you generate it. If you're curious, see the [OpenAPI 3.0 Specification](https://swagger.io/specification/).
 
 {{endtip}}
 
-## HTTP Middleware
-
-So how does all of this get wired up? Mostly in middleware.
-
-An HTTP middleware is a function that wraps an HTTP handler, executing some code before or after the handler runs.
-This is perfect for cross-cutting concerns like logging, where you want to apply the same logic to every request without cluttering your handler code.
-
-We have a set of middleware in `backend/common/http/middlewares.go`:
-
-1. **The correlation ID middleware.** It extracts or generates the ID, adds the correlation-ID-aware logger to the context, and sets the response header so callers can trace their requests.
-2. **The request logger** logs each request's URI, status, method, and latency.
-3. Finally, **the body dump middleware** captures request and response bodies for debugging.
-
-You don't need to think about any of this when writing handlers. The middleware runs before your code, and your handler gets a context that already has everything attached. Call `log.FromContext(ctx)` and the correlation ID and any other attributes are already there.
-
 {{tip}}
 
-If you want to learn more about separating observability concerns from business logic, check out our article on [generic decorators](https://threedots.tech/post/increasing-cohesion-in-go-with-generic-decorators/). The middleware pattern used here follows the same idea: keep logging infrastructure out of your application code.
+Every new endpoint follows the same pattern: add it to the spec, regenerate, implement the new method on `StrictServerInterface`. The compiler will tell you what's missing.
 
 {{endtip}}
 
@@ -193,6 +147,49 @@ If you want to learn more about separating observability concerns from business 
 
 Exercise path: ./project
 
-There's nothing to implement yet. Take a look at the code we prepared and continue to the next exercise.
+Customers need an account to place orders. Let's implement the first endpoint to allow them to register.
 
-With the project scaffolding, module structure, and logging infrastructure in place, you have the foundation for the rest of the training. Next, we'll start building HTTP handlers.
+The endpoint definition is already in `backend/orders/api/http/openapi.yaml`.
+It's a POST request that accepts basic customer details like name, email, phone, and address, then returns a UUID.
+
+1. Generate the OpenAPI code by running `task gen` from the project root. (If you haven't installed Taskfile, see the [installation guide](https://taskfile.dev/installation/).) You can also run `go generate ./...` in the project directory.
+
+2. In `backend/orders/api/http/handler.go`, add a `RegisterCustomer` method on `Handler` to satisfy `StrictServerInterface`.
+
+3. For now, return a `RegisterCustomer201JSONResponse` with a UUID from `uuid.New()` (`github.com/google/uuid`).
+
+4. In the `Register` function in the same file, call `RegisterHandlers(e, NewStrictHandler(handler, nil))` to set up the routing.
+
+{{hints}}
+
+{{hint 1}}
+
+Open `openapi.gen.go` and search for `StrictServerInterface`. The method signature you need to implement is right there.
+
+{{endhint}}
+
+{{hint 2}}
+
+An example solution can look like this:
+
+```go
+func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error) {
+    customerUUID := uuid.New()
+
+    return RegisterCustomer201JSONResponse{
+        CustomerUuid: customerUUID,
+    }, nil
+}
+
+func Register(ctx context.Context, e common.EchoRouter, handler Handler) error {
+    RegisterHandlers(e, NewStrictHandler(handler, nil))
+
+    return nil
+}
+```
+
+Don't forget the import: `"github.com/google/uuid"`.
+
+{{endhint}}
+
+{{endhints}}
