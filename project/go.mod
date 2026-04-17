@@ -5,7 +5,6 @@ go 1.25
 require (
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/labstack/echo/v4 v4.15.1
-	github.com/lithammer/shortuuid/v3 v3.0.7
 	github.com/stretchr/testify v1.11.1
 )
 
