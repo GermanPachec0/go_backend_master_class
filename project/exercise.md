@@ -1,145 +1,124 @@
-# HTTP Handler
+# Custom OpenAPI Types
 
-With the project setup in place, we can now add a public API to our service.
+We're writing in a strongly typed language, but we don't take full advantage of it yet.
 
-We're going to run an HTTP server with endpoints for all the operations.
-These endpoints will be called by the frontend web app, mobile apps, and possibly some internal tools.
+Right now, `CustomerUUID` is `openapi_types.UUID` under the hood.
+If you add more UUID fields later, the compiler can't tell them apart.
+And you don't want to pass the customer UUID where an order UUID is expected.
 
-We'll define the contract as [OpenAPI](https://academy.threedots.tech/knowledge/openapi) schema, generate Go code from it, and expose the first endpoint.
+Similarly, the `CountryCode` is a plain `string`, which means it accepts any value.
+We can catch it later with some validation, but if we use a custom type, the generated code will do it for us.
 
-## Project Layout
+[oapi-codegen](https://academy.threedots.tech/knowledge/openapi) lets you map any type to your own Go type.
+**The compiler catches type mismatches for you, and you don't need to manually convert between OpenAPI types and your own types in the handler.** Let's set that up.
 
-Take a look at the `backend/orders/api/http` package.
-This is where we'll keep OpenAPI definitions and HTTP handlers.
+## Custom Types in OpenAPI
 
-The `api` package represents the entry points to the module. It's how other modules or external clients interact with it.
-For now, there's just one entry point: the HTTP API.
+oapi-codegen supports two extension fields that let you override the generated type: **`x-go-type`** names the Go type to use, and **`x-go-type-import`** provides the import path.
 
-The `api` package is the first *layer* of the module. We'll introduce more layers later.
-
-## OpenAPI-First Design
-
-Instead of defining the HTTP endpoints in the code, **we're going to define the OpenAPI spec first, then generate Go code from it.**
-
-If you've used [gRPC](https://academy.threedots.tech/knowledge/grpc) with [Protocol Buffers](https://academy.threedots.tech/knowledge/protocol-buffers), this should feel familiar. Instead of a `.proto` file, we have `backend/orders/api/http/openapi.yaml` that describes our endpoints and data models.
-
-We'll use [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) to generate types, interfaces, and routing setup. It handles the marshaling and routing boilerplate, so you can focus on business logic.
-
-**Why OpenAPI-first?**
-
-* The spec becomes your contract. Backend and frontend teams see the same schema.
-* API documentation comes for free (tools like Swagger UI read OpenAPI directly).
-* You regenerate Go code after each change to the API. Breaking changes show up as compile errors, not at runtime. It helps you catch issues before they reach production.
-
-## The oapi-codegen Config
-
-Take a look at the configuration:
-
-{{codeFile "backend/orders/api/http/oapi-codegen.yaml"}}
+For `CustomerUUID` schema in `backend/orders/api/http/openapi.yaml`, it could look like this:
 
 ```yaml
-package: http
-generate:
-  echo-server: true
-  strict-server: true
-  models: true
-output: openapi.gen.go
+    CustomerUUID:
+      type: string
+      format: uuid
+      description: UUID of a customer
+      x-go-type: common.UUID
+      x-go-type-import:
+        path: eats/backend/common
 ```
 
-- `package: http` sets the Go package name for the generated file.
-- `echo-server: true` generates code compatible with the Echo library we use.
-- `strict-server: true` generates **`StrictServerInterface`**, which enforces a strict contract: each method receives a typed request struct and returns a typed response struct (similar to gRPC handlers generated from protobuf). This is the interface you'll implement.
-- `models: true` generates Go structs from the OpenAPI schemas (`Address`, `RegisterCustomer`, `ErrorResponse`, etc.).
-- `output: openapi.gen.go` is the output file name.
-
-The `go:generate` command lives in `backend/orders/api/http/openapi.go`:
+The same pattern works for `CountryCode`. After regenerating, the generated type aliases change from this:
 
 ```go
-//go:generate go tool oapi-codegen --config=oapi-codegen.yaml openapi.yaml
+type CountryCode = string
+type CustomerUUID = openapi_types.UUID
 ```
 
-The `go tool` syntax (Go 1.24+) runs tools declared as dependencies in `go.mod`, so you don't need to install `oapi-codegen` separately.
-
-Run `task gen` from the project root (or `go generate ./...`) to execute this command. It reads `backend/orders/api/http/openapi.yaml` and `oapi-codegen.yaml`, then writes `openapi.gen.go` in the same directory.
-
-## What Gets Generated
-
-After running generation, you'll see a new file: `openapi.gen.go`. It contains hundreds of lines of generated code: request and response types, interfaces, and routing. **Never edit this file.** When the spec changes, just regenerate it.
-
-The key piece is the **`StrictServerInterface`**:
+To this:
 
 ```go
-type StrictServerInterface interface {
-    RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error)
-}
+type CountryCode = shared.CountryCode
+type CustomerUUID = common.UUID
 ```
 
-That's the interface you need to implement.
+The OpenAPI schema still says `type: string`, but the generated Go code now uses your custom types.
+You can use them directly in the request and response structs.
 
-As you can see, the exact endpoint signature (`POST /orders/register-customer`) isn't mentioned anywhere.
-We simply trust the generated code to route requests to the right method based on the OpenAPI spec.
+## The UUID Type
 
-oapi-codegen also generates response types for each status code defined in the spec. The naming convention is `{OperationID}{StatusCode}JSONResponse`:
+Take a look at the new `backend/common/uuid.go` file. `type UUID [16]byte` wraps the same underlying type as `google/uuid`. It implements `MarshalText`/`UnmarshalText` for JSON and `Scan`/`Value` for databases (we'll use those in the next module).
 
-- `RegisterCustomer201JSONResponse` for a successful 201 response
-- `RegisterCustomer400JSONResponse` for a 400 bad request
-- `RegisterCustomer409JSONResponse` for a 409 conflict
-
-Each response type is a Go struct matching the schema defined in the OpenAPI spec.
-For example, `RegisterCustomer201JSONResponse` has a `CustomerUuid` field of type `openapi_types.UUID`.
-Simply return the proper struct, and the generated code handles JSON serialization and HTTP headers.
-
-The return type `RegisterCustomerResponseObject` is an interface, so the compiler won't let you return a type that doesn't match the spec. **This gives you compile-time safety for your HTTP responses.** If you try to return a 204 No Content response but the spec only defines 201, 400, and 409, the code won't compile.
+The `NewUUIDv7()` function replaces `uuid.New()`. New UUIDs are generated with `common.NewUUIDv7()` instead of `uuid.New()`.
 
 {{tip}}
 
-You may have noticed the logging exercise uses `shortuuid` for correlation IDs, while here we use `uuid.New()` from `google/uuid`. These serve different purposes: `shortuuid` generates compact, URL-safe strings good for log correlation. For [entity](https://academy.threedots.tech/knowledge/entity) IDs like customer UUIDs, we use standard UUIDs because they're the universal format for database primary keys and APIs.
+Why not stick with v4? `uuid.New()` generates fully random UUIDs. That works fine as an identifier, but it creates a problem you won't notice until the table grows: **inserts get slower over time.**
+
+The database stores rows ordered by primary key in a B-tree index. Random UUIDs land all over the tree, so each insert may touch a different page. As the table grows, more of those pages fall out of memory, and the database has to read from disk to find where to put the new row.
+
+UUID v7 ([RFC 9562](https://www.rfc-editor.org/rfc/rfc9562)) fixes this by putting a timestamp in the first 48 bits. **New IDs are always larger than old ones, so inserts append to the end of the index instead of scattering across it.** You get the same insert performance as auto-increment integers, but without a central counter. Each service instance can generate IDs independently.
+
+How much does this matter in practice? In a [PostgreSQL benchmark](https://www.dujinfang.com/2023/09/02/uuidv4-and-uuidv7.html) with 10 million rows, inserting with a UUID v7 primary key took about 36 seconds. Inserting with UUID v4 took over 4 minutes.
+
+A [MySQL benchmark by Percona](https://www.percona.com/blog/store-uuid-optimized-way/) showed the random UUID table growing almost 50% larger than the ordered one. The gap widens as tables grow, because random UUIDs cause more and more cache misses.
 
 {{endtip}}
 
+## Shared Types
+
+The `backend/common/shared/` package holds types shared between modules. We have only one module right now, so adding shared types feels premature. But setting up the pattern now avoids refactoring every module later when you add a second one.
+
+But it's not that easy. **Shared types are a double-edged sword.** Every type you add creates coupling between every module that uses it. When you change a type in `backend/common/shared`, every team that owns a module using it needs to be involved. Updating `CountryCode` should be fine, but updating a `CustomerProfile` struct with 15 fields can create a cross-team bottleneck.
+
+Keep shared types small:
+
+| Good for shared types                       | Bad for shared types                           |
+|---------------------------------------------|------------------------------------------------|
+| `UUID` - tiny, stable, universal            | `Customer` struct - [entity](https://academy.threedots.tech/knowledge/entity) owned by one module |
+| `CountryCode` - small enum, cross-module    | `OrderStatus` - only one module's concern      |
+| `Address` - simple value, no business logic | Database row structs - coupled to schema       |
+| `Currency` - fixed set, used in prices      | Request/response structs - API-layer concern   |
+
+For most projects, small data types like these are all you need in shared code. The `SharedTypes` variable in `backend/common/shared/shared.go` registers these types for use in test comparisons across modules.
+
 {{tip}}
 
-There are two generated interfaces: `ServerInterface` and `StrictServerInterface`. You want to implement `StrictServerInterface`.
-
-The "strict" version gives you typed request/response objects instead of raw `echo.Context`. It does JSON parsing, validation, and response encoding for you. You get type safety and less boilerplate.
+Avoid sharing types that serve as inter-module communication contracts (we'll cover inter-module communication later). And avoid database models. Changing one module's schema shouldn't force changes in another.
 
 {{endtip}}
 
-## The Starting Point
-
-Right now, `backend/orders/api/http/handler.go` contains an empty `Handler` struct and a `Register` function that does nothing:
+## The Enum Pattern
 
 ```go
-type Handler struct{}
-
-func NewHandler() Handler {
-	return Handler{}
+type CountryCode struct {
+    Enum[CountryCodeType]
 }
 
-func Register(ctx context.Context, e common.EchoRouter, handler Handler) error {
-	return nil
+type CountryCodeType string
+
+func (c CountryCodeType) Values() []string {
+    return []string{"US", "DE", "GB", "JP", "PL"}
 }
 ```
 
-The `Handler` doesn't implement any endpoints yet, and the `Register` function register anything. Your job is to add the `RegisterCustomer` method and wire it up.
+The pattern uses the **`Enumerable`** interface: any type that declares a `Values() []string` method listing its valid values. `Enum[T Enumerable]` is a generic struct in `backend/common/enum.go` that wraps a string and validates it against `T.Values()` during unmarshaling. If someone sends `"XX"` as a country code, `UnmarshalText` rejects it.
 
-## Wiring the Handler
+`CountryCode` embeds `Enum[CountryCodeType]` and gets all serialization methods for free: `MarshalText`, `UnmarshalText`, `Scan`, `Value`.
 
-The wiring takes two lines. In your `Register` function, call `RegisterHandlers` with a strict handler wrapper:
+Notice that the `value` field is unexported. You can't create an `Enum` value without going through `UnmarshalText`, which validates against `Values()`. **If you use a `CountryCode` in code, it's guaranteed to be one of the allowed values (or empty).**
 
-```go
-RegisterHandlers(e, NewStrictHandler(handler, nil))
-```
+To create a new enum:
 
-{{tip}}
+1. Define a type (e.g., `type OrderStatusType string`)
+2. Implement `Values()` returning all valid strings
+3. Create a wrapper struct embedding `Enum[OrderStatusType]`
 
-We generate the `openapi.yaml` spec for you in this training, so you don't need to learn OpenAPI syntax right now. In real projects, we recommend writing the spec by hand or using AI to help you generate it. If you're curious, see the [OpenAPI 3.0 Specification](https://swagger.io/specification/).
-
-{{endtip}}
+We wrote about this pattern in [Safer Enums in Go](https://threedots.tech/post/safer-enums-in-go/). The code here is the next iteration of that approach, now using generics.
 
 {{tip}}
 
-Every new endpoint follows the same pattern: add it to the spec, regenerate, implement the new method on `StrictServerInterface`. The compiler will tell you what's missing.
+The `MustEnum` helper function uses an advanced generic constraint to create enum values in one call: `MustEnum[CountryCode]("US")`. You don't need to understand the syntax to use it.
 
 {{endtip}}
 
@@ -147,48 +126,31 @@ Every new endpoint follows the same pattern: add it to the spec, regenerate, imp
 
 Exercise path: ./project
 
-Customers need an account to place orders. Let's implement the first endpoint to allow them to register.
-
-The endpoint definition is already in `backend/orders/api/http/openapi.yaml`.
-It's a POST request that accepts basic customer details like name, email, phone, and address, then returns a UUID.
-
-1. Generate the OpenAPI code by running `task gen` from the project root. (If you haven't installed Taskfile, see the [installation guide](https://taskfile.dev/installation/).) You can also run `go generate ./...` in the project directory.
-
-2. In `backend/orders/api/http/handler.go`, add a `RegisterCustomer` method on `Handler` to satisfy `StrictServerInterface`.
-
-3. For now, return a `RegisterCustomer201JSONResponse` with a UUID from `uuid.New()` (`github.com/google/uuid`).
-
-4. In the `Register` function in the same file, call `RegisterHandlers(e, NewStrictHandler(handler, nil))` to set up the routing.
+1. Add `x-go-type` and `x-go-type-import` for `CustomerUUID` in `backend/orders/api/http/openapi.yaml`, mapping it to `common.UUID` from `eats/backend/common`.
+2. Do the same for `CountryCode`, mapping it to `shared.CountryCode`.
+3. Regenerate: run `task gen` (or `go generate ./...`).
+4. In `backend/orders/api/http/handler.go`, change `uuid.New()` to `common.NewUUIDv7()` and update the import from `github.com/google/uuid` to `eats/backend/common`.
 
 {{hints}}
 
 {{hint 1}}
 
-Open `openapi.gen.go` and search for `StrictServerInterface`. The method signature you need to implement is right there.
+The `x-go-type` and `x-go-type-import` fields go directly under the schema definition, at the same indentation level as `type` and `description`. The `x-go-type` value is the qualified Go type name (e.g., `common.UUID`), not the full import path.
 
 {{endhint}}
 
 {{hint 2}}
 
-An example solution can look like this:
+For `CountryCode` in `backend/orders/api/http/openapi.yaml`:
 
-```go
-func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error) {
-    customerUUID := uuid.New()
-
-    return RegisterCustomer201JSONResponse{
-        CustomerUuid: customerUUID,
-    }, nil
-}
-
-func Register(ctx context.Context, e common.EchoRouter, handler Handler) error {
-    RegisterHandlers(e, NewStrictHandler(handler, nil))
-
-    return nil
-}
+```yaml
+    CountryCode:
+      type: string
+      description: Country code in ISO 3166-1 alpha-2 format
+      x-go-type: shared.CountryCode
+      x-go-type-import:
+        path: eats/backend/common/shared
 ```
-
-Don't forget the import: `"github.com/google/uuid"`.
 
 {{endhint}}
 
