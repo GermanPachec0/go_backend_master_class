@@ -2,28 +2,28 @@ package http
 
 import (
 	"context"
-	"fmt"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"eats/backend/common"
 	"eats/backend/common/shared"
-	"eats/backend/orders/adapters/db/dbmodels"
 )
 
+type CustomerRepository interface {
+	RegisterCustomer(ctx context.Context, customerUUID common.UUID, customer RegisterCustomer) error
+}
+
 type Handler struct {
-	db *pgxpool.Pool
+	CustomerRepository CustomerRepository
 }
 
 func NewHandler(
-	db *pgxpool.Pool,
+	customerRepository CustomerRepository,
 ) Handler {
-	if db == nil {
-		panic("db cannot be nil")
+	if customerRepository == nil {
+		panic("customerRepository cannot be nil")
 	}
 
 	return Handler{
-		db: db,
+		CustomerRepository: customerRepository,
 	}
 }
 
@@ -31,22 +31,12 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 	customer := request.Body
 	customerUUID := common.NewUUIDv7()
 
-	queries := dbmodels.New(h.db)
+	err := h.CustomerRepository.RegisterCustomer(ctx, customerUUID, *customer)
 
-	commonAddress, err := openapiAddressToSharedAddress(customer.Address)
 	if err != nil {
-		return nil, fmt.Errorf("convert address failed: %w", err)
-	}
-
-	err = queries.InsertCustomer(ctx, dbmodels.InsertCustomerParams{
-		CustomerUuid: customerUUID,
-		Name:         customer.Name,
-		Email:        string(customer.Email),
-		Address:      commonAddress,
-		PhoneNumber:  customer.PhoneNumber,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("insert customer failed: %w", err)
+		return RegisterCustomer409JSONResponse{
+			Message: err.Error(),
+		}, nil
 	}
 
 	return RegisterCustomer201JSONResponse{
