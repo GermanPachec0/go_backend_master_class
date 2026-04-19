@@ -36,7 +36,6 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 		}, nil
 	}
 	email := string(request.Body.Email)
-
 	err = query.InsertCustomer(ctx, dbmodels.InsertCustomerParams{
 		CustomerUuid: customerUUID,
 		Name:         request.Body.Name,
