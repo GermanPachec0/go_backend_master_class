@@ -1,196 +1,173 @@
-# SQL Migrations
+# Generate sqlc
 
-The register customer endpoint is ready to use by the frontend app, but it doesn't do anything yet.
-Let's prepare a way to store the customer's data. We're using PostgreSQL as our database.
+Our database schema is ready. Now you need a way to query it from Go.
 
-We'll start with SQL migrations.
+Most Go ORMs follow the Rails or Django model: define a struct, and the tool generates SQL for you.
 
-## How Migrations Work
+[sqlc](https://docs.sqlc.dev) works in reverse. You write SQL queries, and sqlc generates type-safe Go code. There's no reflection or `any` types, and if a query doesn't match the schema, you get an error at generation time, not at runtime.
 
-SQL migrations are **versioned, incremental changes** to your database schema. Each migration is a numbered SQL file that gets applied in order.
-When you start the application locally, all migrations run from the first one.
+It may not sound like the best idea, but it works well. You write the SQL you'd write anyway, annotate it with a comment, and sqlc produces Go functions with exact argument and return types.
 
-**In production, only new migrations that haven't been applied yet are executed.** This way, each environment stays in sync, and you don't run any manual SQL scripts.
+Very often, your writes differ from your reads. An INSERT touches five columns in one table, while a dashboard query joins ten tables and returns some aggregated data. sqlc gives you separate types for each operation, which is easy to work with.
 
-We use the [migrate](https://github.com/golang-migrate/migrate) library in our project. It's widely adopted, has a minimal API, and works well with Go's [`embed`](https://pkg.go.dev/embed) package.
+The pattern is the same one you've already used with [OpenAPI](https://academy.threedots.tech/knowledge/openapi): write the spec, run `go generate`, and get type-safe code. With OpenAPI, the spec was a YAML file describing HTTP endpoints. With sqlc, the spec is a `.sql` file with annotated queries.
 
-## Where Migrations Live
+sqlc reads your migration files to infer the schema. It doesn't need a running database.
 
-Migration files go in `backend/orders/adapters/db/migrations/`.
+### The Two Key Files
 
-Adapters are the second *layer* we introduce. They contain all the code that interacts with external systems like databases, HTTP APIs, the filesystem, etc. The `db` adapter contains all database-related code for the orders module.
+**`backend/orders/adapters/db/sqlc.yaml`** configures the generator. Take a look at the configuration:
 
-The path may look nested, but it's on purpose.
-As the project grows with more modules, each module's migrations stay isolated. Remember, we're building a modular monolith where each module could be owned by a different team.
-
-In smaller projects with one schema, keeping all migrations in a single top-level directory is fine. Use what works for your project.
-
-## How Migrations Run in This Project
-
-In our project, **migrations are embedded directly in the binary** and run on application startup. You don't need migration scripts, sidecar containers, or extra CI steps.
-
-Take a look at `backend/orders/module.go`:
-
-```go
-//go:embed adapters/db/migrations/*.sql
-var embedMigrations embed.FS
+```yaml
+version: "2"
+sql:
+  - engine: "postgresql"           # database engine
+    queries: "queries"             # directory with .sql query files
+    schema: "migrations"           # migration files (sqlc parses these for schema)
+    gen:
+      go:
+        package: "dbmodels"        # Go package name for generated code
+        out: "dbmodels"            # output directory
+        sql_package: "pgx/v5"      # use pgx/v5 (not database/sql)
+        emit_empty_slices: true    # return []T{} instead of nil for :many queries
+        emit_pointers_for_null_types: true  # use *T for nullable columns
+        overrides:                 # custom type mappings (see below)
+          # ...
 ```
 
-The `//go:embed` directive tells the Go compiler to bundle all `.sql` files from `adapters/db/migrations/` into the binary at build time. At runtime, `embedMigrations` acts as a read-only filesystem.
-In practice, this means **you can distribute the application as a single binary file**, and don't need to worry about copying the SQL files separately.
+For most projects, these defaults work fine. See the full [sqlc config reference](https://docs.sqlc.dev/en/latest/reference/config.html) for all available options.
 
-The `Init` function calls `MigrateDatabaseUp` (defined in `backend/common/migrations.go`) with the embedded files:
+We'll keep the queries in **`backend/orders/adapters/db/queries/*.sql`** files with comment annotations.
 
-```go
-func (m *Module) Init(ctx context.Context) error {
-	// ...
-	if err := common.MigrateDatabaseUp(
-		ctx,
-		string(m.Name()),
-		m.stdDb,
-		embedMigrations,
-		"adapters/db/migrations",
-	); err != nil {
-		return err
-	}
-	// ...
-}
+Here's the format:
+
+```sql
+-- name: InsertAuthor :exec
+INSERT INTO authors (id, name, created_at) VALUES ($1, $2, $3);
+
+-- name: GetAuthor :one
+SELECT * FROM authors WHERE id = $1;
 ```
 
-**To add a new migration**, create a new `.up.sql` file with the next sequential number (e.g., `0002_add_orders_table.up.sql`). The embed's glob pattern (`*.sql`) picks it up automatically.
+The annotation `-- name: QueryName :command` tells sqlc what to generate. `:exec` produces a function that returns only an `error` (for INSERT, UPDATE, DELETE). `:one` produces a function that returns a single struct and an `error`. There's also `:many` for queries returning multiple rows. See the [query annotations reference](https://docs.sqlc.dev/en/latest/reference/query-annotations.html) for the full list.
+
+sqlc generates separate structs for each query. `InsertCustomer` gets its own `InsertCustomerParams`, while `GetCustomerByUUID` returns an `OrdersCustomer`. In this exercise, they have the same fields.
+
+In practice, you often write different data than you read. This reflects **[CQRS](https://academy.threedots.tech/knowledge/cqrs)** (Command Query Responsibility Segregation): write models and [read models](https://academy.threedots.tech/knowledge/read-model) don't have to match. For more, see [How to use basic CQRS in Go](https://threedots.tech/post/basic-cqrs-in-go/).
 
 {{tip}}
 
-There are two common naming strategies for migration files: sequential numbers (`0001_`, `0002_`) and timestamps (`20260218120000_`).
+If you use auto-incremented IDs, combine `RETURNING` with `:one` to get the generated ID:
 
-In this training, we'll use sequential numbers.
+```sql
+-- name: CreateAuthor :one
+INSERT INTO authors (name) VALUES ($1) RETURNING id;
+```
 
-With timestamps, when two PRs add migrations in parallel, they can be merged in any order, and you don't control which one runs first in production.
-This can cause schema drift between the production and your local or CI environment, leading to hard-to-debug issues.
+Use `RETURNING *` to get the full row back. You'll see this pattern in a later exercise.
 
-Sequential numbers have their own downside: if two people add a migration at the same time, they'll pick the same number and one PR will need a rename after the other merges.
-That's a minor inconvenience compared to unpredictable ordering in production, though.
+We use UUIDs in this training. Sequential IDs leak how many entities you have (a competitor can estimate your order volume from an order ID), and they require a single sequence that becomes a bottleneck in distributed systems.
 
 {{endtip}}
 
-## PostgreSQL Schemas
+### Type Mapping
 
-**Each module in our project gets its own PostgreSQL schema.** A schema is a namespace within a database. `orders.customers` means the `customers` table in the `orders` schema.
+By default, sqlc uses the database driver's types, so we would need to convert the HTTP request types to pgx types.
+We want to use our shared types instead: `common.UUID` and `shared.Address`.
 
-As the project grows with more modules, this gives clear ownership boundaries and prevents table name collisions. You can still join across schemas when needed.
+The `overrides` section in `sqlc.yaml` handles this with two kinds of overrides:
 
-You might wonder why `CREATE SCHEMA IF NOT EXISTS orders` appears in two places: in the migration file and in `MigrateDatabaseUp()` in Go code. Both are necessary.
+- **`db_type` overrides** apply globally. Setting `db_type: "uuid"` to `common.UUID` means every `uuid` column in every table uses `common.UUID`. This is the right choice for types that should always map the same way.
 
-The Go function creates the schema at runtime before migrations execute, because `migrate` needs the schema to exist so it can create its `schema_migrations` tracking table.
+- **`column` overrides** target one specific column. The `address` column is stored as `json` in PostgreSQL, but not every `json` column is an address. So we use `column: "orders.customers.address"` to map only that column to `shared.Address`.
 
-The migration file needs it because of how the sqlc library works (you'll learn about it in the next module).
+You must configure type overrides explicitly for each custom type. sqlc doesn't infer types from your Go code.
 
-Both use `IF NOT EXISTS`, so there's no conflict at runtime.
+Here, `common.UUID` is the same type used in the OpenAPI-generated HTTP code.
+**The same UUID flows from the HTTP request through to database insert, so you don't need to map it manually.**
 
-## Migration Rules
+We will need to map the address type, though. It's more complex so it's pragmatic not to couple it to the HTTP code.
+We'll look into it in the next exercise.
 
-**Use sequential numbers for migrations.** Once a migration is merged, don't change it. Create a new one instead.
+{{tip}}
 
-Write migrations that work with both old and new code versions. Your CI should catch failing migrations before they reach production.
+Sharing types across layers works well for stable, universal types like `UUID` or `Currency`. For types that evolve differently between layers, keep separate models and write explicit mapping functions. See [When to avoid DRY](https://threedots.tech/post/things-to-know-about-dry/) for more on this trade-off.
 
-There two kinds of migrations: up (applying changes) and down (reverting changes).
+{{endtip}}
 
-We write **up migrations only**.
+### Running the Generator
 
-Using down migrations in production is tricky and risky. It's better to fix forward with a new migration.
+The file `backend/orders/adapters/db/sqlc.go` contains a [Go generate directive](https://pkg.go.dev/cmd/go#hdr-Generate_Go_files_by_processing_source):
 
-Locally, it's easier to clean the database and start from scratch than to think about which version to roll back to. No need to write something you'll never use. Down migrations are possible if you want them. See the [migrate docs](https://github.com/golang-migrate/migrate/blob/master/MIGRATIONS.md) for the file naming convention.
+```go
+//go:generate go tool sqlc generate
+```
 
-**Wrap your migrations in an explicit transaction** (`BEGIN` / `COMMIT`). PostgreSQL supports transactional schema changes, but `migrate` doesn't auto-wrap your file in a transaction. Without explicit wrapping, a failing migration with multiple statements could leave the schema in a partially applied state.
+The `go tool` syntax uses Go 1.24+ [tool dependency management](https://go.dev/doc/modules/managing-dependencies#tools). The exact sqlc version is pinned in `go.mod`, so everyone on the team runs the same version.
 
-Even with a single `CREATE TABLE`, wrapping in a transaction is a good default. It costs nothing and prevents surprises if you decide to extend the migration later.
+You can run this directly with `go generate ./...`, or use `task gen` which runs code generation across all modules. From now on, **every time you add or change a query, run `task gen`.**
+
+**Never edit generated files directly.** They'll be overwritten on the next generation. The `.gitattributes` file already marks `dbmodels/**.go` as generated, so they're collapsed in GitHub PRs. See {{exerciseLink "the .gitattributes exercise" "03-http" "03-gitattributes"}} for more on this pattern.
 
 ## Exercise
 
 Exercise path: ./project
 
-{{tip}}
+Add two queries to `backend/orders/adapters/db/queries/customers.sql`:
 
-If you mess something up with migrations locally, run `task up-clean` to start from a clean state.
-When running `tdl tr run`, you always start with a clean database.
+1. **`InsertCustomer`** - an `INSERT` with the `:exec` annotation. It should insert a new row into the `customers` table with all five columns: `customer_uuid`, `name`, `email`, `address`, `phone_number`.
+2. **`GetCustomerByUUID`** - a `SELECT *` with the `:one` annotation. Select the customer by `customer_uuid`.
 
-{{endtip}}
+Use the PostgreSQL placeholders for query parameters:
 
-Implement the migration in `backend/orders/adapters/db/migrations/0001_init_orders.up.sql`.
+```sql
+INSERT INTO ... VALUES ($1, $2, $3, $4, $5);
 
-This migration should create the `orders.customers` table with these columns:
+SELECT * FROM ... WHERE ... = $1;
+```
 
-| Column          | Type           | Constraints               |
-|-----------------|----------------|---------------------------|
-| `customer_uuid` | `uuid`         | `NOT NULL`, `PRIMARY KEY` |
-| `name`          | `varchar(255)` | `NOT NULL`                |
-| `email`         | `varchar(255)` | `NOT NULL`                |
-| `address`       | `json`         | `NOT NULL`                |
-| `phone_number`  | `varchar(50)`  | `NOT NULL`                |
 
-Remember to wrap the migration in a transaction (`BEGIN` / `COMMIT`) and create the schema before the table (`CREATE SCHEMA IF NOT EXISTS orders`).
+Then generate the code by running `task gen` (or `go generate ./...`).
 
-{{conversation "From a Past Code Review"}}
-
-{{message "milosz"}}
-
-I noticed you used `customer_uuid` instead of just `id` for the primary key. Any particular reason?
-
-{{endmessage}}
-
-{{message "robert" "milosz:+1"}}
-
-When you have bare `id` columns, every JOIN needs aliasing, like: `o.id`, `c.id`, `oi.id`, etc.
-With named keys like `customer_uuid`, the column is self-documenting. You can grep for it and immediately know what it refers to.
-
-Plus, PostgreSQL's `USING` clause works cleanly: `JOIN order_items USING (order_uuid)`.
-
-{{endmessage}}
-
-{{endconversation}}
-
-{{tip}}
-
-You can verify your migration by connecting to the database with `task pgcli` (install from [pgcli.com](https://www.pgcli.com/install)) after running `task up`. You can also use any database client of your choice with connection string `postgres://user:password@localhost:5432/eats`.
-
-Remember to call `SET search_path TO 'orders';` to work with the orders schema.
-
-{{endtip}}
+After generation, verify that `backend/orders/adapters/db/dbmodels/customers.sql.go` exists with `GetCustomerByUUID` and `InsertCustomer` methods. The type mapping is already configured in `sqlc.yaml`. We'll use the generated code in the next exercise.
 
 {{hints}}
 
 {{hint 1}}
 
-Your migration file needs three structural elements:
-
-1. Wrap everything in a transaction (`BEGIN` at the start, `COMMIT` at the end)
-2. Create the schema: `CREATE SCHEMA IF NOT EXISTS orders;`
-3. Create the table with the `orders.` prefix: `CREATE TABLE orders.customers (...)`
-
-Use the column spec table above for the column names, types, and constraints.
+Use the schema-qualified table name `orders.customers` (matching your migration).
 
 {{endhint}}
 
 {{hint 2}}
 
-Here's one way to implement this:
+```sql
+-- name: InsertCustomer :exec
+INSERT INTO
+    orders.customers (
+    customer_uuid,
+    name,
+    email,
+    address,
+    phone_number)
+VALUES
+    ($1, $2, $3, $4, $5)
+;
+```
+
+{{endhint}}
+
+{{hint 3}}
 
 ```sql
-BEGIN;
-
-CREATE SCHEMA IF NOT EXISTS orders;
-
-CREATE TABLE orders.customers
-(
-    customer_uuid uuid         NOT NULL,
-    name          varchar(255) NOT NULL,
-    email         varchar(255) NOT NULL,
-    address       json         NOT NULL,
-    phone_number  varchar(50)  NOT NULL,
-    PRIMARY KEY (customer_uuid)
-);
-
-COMMIT;
+-- name: GetCustomerByUUID :one
+SELECT
+    *
+FROM
+    orders.customers
+WHERE
+    customer_uuid = $1
+;
 ```
 
 {{endhint}}
