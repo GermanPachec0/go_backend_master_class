@@ -12,13 +12,16 @@ func NewHandler() Handler {
 	return Handler{}
 }
 
-func Register(ctx context.Context, e common.EchoRouter, handler Handler) error {
-	RegisterHandlers(e, NewStrictHandler(handler, nil))
-	return nil
+func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error) {
+	customerUUID := common.NewUUIDv7()
+
+	return RegisterCustomer201JSONResponse{
+		CustomerUuid: customerUUID,
+	}, nil
 }
 
-func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error) {
-	return RegisterCustomer201JSONResponse{
-		CustomerUuid: common.NewUUIDv7(),
-	}, nil
+func Register(ctx context.Context, e EchoRouter, handler Handler) error {
+	RegisterHandlers(e, NewStrictHandler(handler, nil))
+
+	return nil
 }
