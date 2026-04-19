@@ -1,61 +1,198 @@
-# Gitattributes
+# SQL Migrations
 
-The `.gen.go` files from the previous exercises now live in your repository, and generated files in version control need a bit of care. The [`.gitattributes`](https://git-scm.com/docs/gitattributes) file we added tells Git and GitHub how to treat them. It helps with two problems: teammates trying to resolve merge conflicts in generated code, and PR reviews cluttered with hundreds of lines of [oapi-codegen](https://academy.threedots.tech/knowledge/openapi) output.
+The register customer endpoint is ready to use by the frontend app, but it doesn't do anything yet.
+Let's prepare a way to store the customer's data. We're using PostgreSQL as our database.
 
-## Merge Conflicts in Generated Code
+We'll start with SQL migrations.
 
-Consider two developers working on separate branches. Both modify the OpenAPI spec and run `go generate ./...`.
-Both branches now have a different version of the same `openapi.gen.go` file, fully rewritten by oapi-codegen.
-When they merge, Git shows dozens of conflicting lines in the generated files.
+## How Migrations Work
 
-**The conflict looks scary, but nobody should resolve it by hand.** **Instead of resolving the conflicts, regenerate the file.**
-Merge the OpenAPI specs, then run `go generate ./...`, and commit the output. That's the correct workflow for any generated file.
+SQL migrations are **versioned, incremental changes** to your database schema. Each migration is a numbered SQL file that gets applied in order.
+When you start the application locally, all migrations run from the first one.
 
-Note that `.gitattributes` doesn't prevent this merge conflict. It still happens.
-The `linguist-generated` attribute is not a merge strategy.
-What it does is communicate to your team that this file is machine output, so nobody wastes time reviewing or hand-merging it line by line.
+**In production, only new migrations that haven't been applied yet are executed.** This way, each environment stays in sync, and you don't run any manual SQL scripts.
 
-## PR Review Noise
+We use the [migrate](https://github.com/golang-migrate/migrate) library in our project. It's widely adopted, has a minimal API, and works well with Go's [`embed`](https://pkg.go.dev/embed) package.
 
-What's worse, generated files clutter every pull request.
-Your change touches 15 lines in the OpenAPI spec and 20 lines in the handler, but the diff also includes 223 lines of regenerated boilerplate.
-Reviewers have to scroll past generated files trying to find your actual code.
+## Where Migrations Live
 
-Your project's `.gitattributes` file contains a single line:
+Migration files go in `backend/orders/adapters/db/migrations/`.
 
-```text
-**/**.gen.go linguist-generated=true
+Adapters are the second *layer* we introduce. They contain all the code that interacts with external systems like databases, HTTP APIs, the filesystem, etc. The `db` adapter contains all database-related code for the orders module.
+
+The path may look nested, but it's on purpose.
+As the project grows with more modules, each module's migrations stay isolated. Remember, we're building a modular monolith where each module could be owned by a different team.
+
+In smaller projects with one schema, keeping all migrations in a single top-level directory is fine. Use what works for your project.
+
+## How Migrations Run in This Project
+
+In our project, **migrations are embedded directly in the binary** and run on application startup. You don't need migration scripts, sidecar containers, or extra CI steps.
+
+Take a look at `backend/orders/module.go`:
+
+```go
+//go:embed adapters/db/migrations/*.sql
+var embedMigrations embed.FS
 ```
 
-This glob pattern matches any `.gen.go` file at any directory depth. `linguist-generated=true` tells [GitHub Linguist](https://github.com/github-linguist/linguist) (and GitLab) that these files are generated. GitHub **collapses them by default** in the "Files changed" tab and excludes them from language statistics. Reviewers see only the files that matter and can still expand the generated file if they need to.
+The `//go:embed` directive tells the Go compiler to bundle all `.sql` files from `adapters/db/migrations/` into the binary at build time. At runtime, `embedMigrations` acts as a read-only filesystem.
+In practice, this means **you can distribute the application as a single binary file**, and don't need to worry about copying the SQL files separately.
 
-## Why Commit Generated Files?
+The `Init` function calls `MigrateDatabaseUp` (defined in `backend/common/migrations.go`) with the embedded files:
 
-The alternative is adding `.gen.go` to `.gitignore` and regenerating in CI.
-This complicates the developer experience, since you need to always run `go generate` before building the project.
-The CI jobs take longer.
-You also lose the ability to track how the generated code changes over time.
+```go
+func (m *Module) Init(ctx context.Context) error {
+	// ...
+	if err := common.MigrateDatabaseUp(
+		ctx,
+		string(m.Name()),
+		m.stdDb,
+		embedMigrations,
+		"adapters/db/migrations",
+	); err != nil {
+		return err
+	}
+	// ...
+}
+```
 
-**For most projects, committing generated files and marking them with `.gitattributes` is the best approach.**
-
-## Asserting no changes
-
-We recommend running the code generators in the CI and asserting that nothing changed.
-For example, you can check that `git status --porcelain` is empty.
-This way, you can catch if someone forgets to run `go generate` after changing the OpenAPI spec.
-
-Note you need to use the same exact version of the tools in CI as everyone do locally for this to work.
-This is now trivial with `go tool` support in `go.mod`.
+**To add a new migration**, create a new `.up.sql` file with the next sequential number (e.g., `0002_add_orders_table.up.sql`). The embed's glob pattern (`*.sql`) picks it up automatically.
 
 {{tip}}
 
-Next time you open a PR on GitHub with generated Go files, notice how they're collapsed by default. For more on keeping PRs reviewable, see our [How to Create PRs That Get Merged The Same Day](https://threedots.tech/episode/prs-that-get-merged-the-same-day/) episode.
+There are two common naming strategies for migration files: sequential numbers (`0001_`, `0002_`) and timestamps (`20260218120000_`).
+
+In this training, we'll use sequential numbers.
+
+With timestamps, when two PRs add migrations in parallel, they can be merged in any order, and you don't control which one runs first in production.
+This can cause schema drift between the production and your local or CI environment, leading to hard-to-debug issues.
+
+Sequential numbers have their own downside: if two people add a migration at the same time, they'll pick the same number and one PR will need a rename after the other merges.
+That's a minor inconvenience compared to unpredictable ordering in production, though.
 
 {{endtip}}
+
+## PostgreSQL Schemas
+
+**Each module in our project gets its own PostgreSQL schema.** A schema is a namespace within a database. `orders.customers` means the `customers` table in the `orders` schema.
+
+As the project grows with more modules, this gives clear ownership boundaries and prevents table name collisions. You can still join across schemas when needed.
+
+You might wonder why `CREATE SCHEMA IF NOT EXISTS orders` appears in two places: in the migration file and in `MigrateDatabaseUp()` in Go code. Both are necessary.
+
+The Go function creates the schema at runtime before migrations execute, because `migrate` needs the schema to exist so it can create its `schema_migrations` tracking table.
+
+The migration file needs it because of how the sqlc library works (you'll learn about it in the next module).
+
+Both use `IF NOT EXISTS`, so there's no conflict at runtime.
+
+## Migration Rules
+
+**Use sequential numbers for migrations.** Once a migration is merged, don't change it. Create a new one instead.
+
+Write migrations that work with both old and new code versions. Your CI should catch failing migrations before they reach production.
+
+There two kinds of migrations: up (applying changes) and down (reverting changes).
+
+We write **up migrations only**.
+
+Using down migrations in production is tricky and risky. It's better to fix forward with a new migration.
+
+Locally, it's easier to clean the database and start from scratch than to think about which version to roll back to. No need to write something you'll never use. Down migrations are possible if you want them. See the [migrate docs](https://github.com/golang-migrate/migrate/blob/master/MIGRATIONS.md) for the file naming convention.
+
+**Wrap your migrations in an explicit transaction** (`BEGIN` / `COMMIT`). PostgreSQL supports transactional schema changes, but `migrate` doesn't auto-wrap your file in a transaction. Without explicit wrapping, a failing migration with multiple statements could leave the schema in a partially applied state.
+
+Even with a single `CREATE TABLE`, wrapping in a transaction is a good default. It costs nothing and prevents surprises if you decide to extend the migration later.
 
 ## Exercise
 
 Exercise path: ./project
 
-We've added a `.gitattributes` file to your project that marks all `.gen.go` files as generated.
-Nothing else to do for now.
+{{tip}}
+
+If you mess something up with migrations locally, run `task up-clean` to start from a clean state.
+When running `tdl tr run`, you always start with a clean database.
+
+{{endtip}}
+
+Implement the migration in `backend/orders/adapters/db/migrations/0001_init_orders.up.sql`.
+
+This migration should create the `orders.customers` table with these columns:
+
+| Column          | Type           | Constraints               |
+|-----------------|----------------|---------------------------|
+| `customer_uuid` | `uuid`         | `NOT NULL`, `PRIMARY KEY` |
+| `name`          | `varchar(255)` | `NOT NULL`                |
+| `email`         | `varchar(255)` | `NOT NULL`                |
+| `address`       | `json`         | `NOT NULL`                |
+| `phone_number`  | `varchar(50)`  | `NOT NULL`                |
+
+Remember to wrap the migration in a transaction (`BEGIN` / `COMMIT`) and create the schema before the table (`CREATE SCHEMA IF NOT EXISTS orders`).
+
+{{conversation "From a Past Code Review"}}
+
+{{message "milosz"}}
+
+I noticed you used `customer_uuid` instead of just `id` for the primary key. Any particular reason?
+
+{{endmessage}}
+
+{{message "robert" "milosz:+1"}}
+
+When you have bare `id` columns, every JOIN needs aliasing, like: `o.id`, `c.id`, `oi.id`, etc.
+With named keys like `customer_uuid`, the column is self-documenting. You can grep for it and immediately know what it refers to.
+
+Plus, PostgreSQL's `USING` clause works cleanly: `JOIN order_items USING (order_uuid)`.
+
+{{endmessage}}
+
+{{endconversation}}
+
+{{tip}}
+
+You can verify your migration by connecting to the database with `task pgcli` (install from [pgcli.com](https://www.pgcli.com/install)) after running `task up`. You can also use any database client of your choice with connection string `postgres://user:password@localhost:5432/eats`.
+
+Remember to call `SET search_path TO 'orders';` to work with the orders schema.
+
+{{endtip}}
+
+{{hints}}
+
+{{hint 1}}
+
+Your migration file needs three structural elements:
+
+1. Wrap everything in a transaction (`BEGIN` at the start, `COMMIT` at the end)
+2. Create the schema: `CREATE SCHEMA IF NOT EXISTS orders;`
+3. Create the table with the `orders.` prefix: `CREATE TABLE orders.customers (...)`
+
+Use the column spec table above for the column names, types, and constraints.
+
+{{endhint}}
+
+{{hint 2}}
+
+Here's one way to implement this:
+
+```sql
+BEGIN;
+
+CREATE SCHEMA IF NOT EXISTS orders;
+
+CREATE TABLE orders.customers
+(
+    customer_uuid uuid         NOT NULL,
+    name          varchar(255) NOT NULL,
+    email         varchar(255) NOT NULL,
+    address       json         NOT NULL,
+    phone_number  varchar(50)  NOT NULL,
+    PRIMARY KEY (customer_uuid)
+);
+
+COMMIT;
+```
+
+{{endhint}}
+
+{{endhints}}
