@@ -37,6 +37,7 @@ var embedMigrations embed.FS
 
 func (m *Module) Init(ctx context.Context) error {
 	customerRepo := db.NewCustomerRepository(m.pgxDb)
+
 	httpHandler := http2.NewHandler(
 		customerRepo,
 	)

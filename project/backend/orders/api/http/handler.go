@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"eats/backend/common"
-	"eats/backend/common/shared"
 )
 
 type CustomerRepository interface {
@@ -12,7 +11,7 @@ type CustomerRepository interface {
 }
 
 type Handler struct {
-	CustomerRepository CustomerRepository
+	customerRepository CustomerRepository
 }
 
 func NewHandler(
@@ -23,40 +22,21 @@ func NewHandler(
 	}
 
 	return Handler{
-		CustomerRepository: customerRepository,
+		customerRepository: customerRepository,
 	}
 }
 
 func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error) {
-	customer := request.Body
 	customerUUID := common.NewUUIDv7()
 
-	err := h.CustomerRepository.RegisterCustomer(ctx, customerUUID, *customer)
-
+	err := h.customerRepository.RegisterCustomer(ctx, customerUUID, *request.Body)
 	if err != nil {
-		return RegisterCustomer409JSONResponse{
-			Message: err.Error(),
-		}, nil
+		return nil, err
 	}
 
 	return RegisterCustomer201JSONResponse{
 		CustomerUuid: customerUUID,
 	}, nil
-}
-
-func openapiAddressToSharedAddress(addr Address) (shared.Address, error) {
-	sharedAddr, err := shared.NewAddress(
-		addr.Line1,
-		addr.Line2,
-		addr.PostalCode,
-		addr.City,
-		addr.CountryCode,
-	)
-	if err != nil {
-		return shared.Address{}, err
-	}
-
-	return sharedAddr, nil
 }
 
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {
