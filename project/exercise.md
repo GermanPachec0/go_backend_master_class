@@ -1,59 +1,74 @@
-# Implement Repository
+# Integrate Repository
 
-In the previous exercise, we put SQL calls directly in the handler. For a single endpoint, that's good enough.
+We have a working `CustomerRepository` covered by [integration tests](https://academy.threedots.tech/knowledge/integration-testing).
+But the HTTP handler still uses `*pgxpool.Pool` and talks to the database directly.
+Let's connect the [repository](https://academy.threedots.tech/knowledge/repository-pattern) to hide the database behind an interface.
 
-But as the project grows, handlers start mixing too many concerns.
-It's difficult to understand the logic next to the database calls.
-If two endpoints use the same database query, you have to duplicate it.
-When writing tests, you have to run the server and call the HTTP endpoints.
+### Injecting the Repository
 
-That's where the **[Repository Pattern](https://academy.threedots.tech/knowledge/repository-pattern)** comes in.
-The idea is to separate database logic from the rest of the application.
-Your HTTP handler doesn't need to know about sqlc queries or `InsertCustomerParams`.
-It calls a method on the repository, and the repository handles the database details.
+We need to call the repository from the handler.
+First, we need to inject it in the same way we injected the database pool before.
+But this time, we'll use an interface instead of a concrete type.
 
-**Keeping the logic of your application together with your database logic makes your application much more complex, harder to test, and harder to maintain.**
-With a repository, you can test business logic by mocking the repository interface.
-You can change the database implementation without touching handlers.
-And when two handlers need to insert a customer, the logic lives in one place.
+The handler declares what it needs as an interface with a single method: `RegisterCustomer`.
 
-### Integration Tests
+```go
+type CustomerRepository interface {
+    RegisterCustomer(ctx context.Context, customerUUID common.UUID, customer RegisterCustomer) error
+}
+```
 
-We prepared the boilerplate for you.
-Take a look at `CustomerRepository` in `backend/orders/adapters/db/customer_repo.go`.
+In some languages, it's common to define interfaces close to the implementation.
+**In Go, we define the interface close to where it's used, in the handler file.**
 
-There are also integration tests in `backend/orders/adapters/db/customer_repo_test.go`.
-They verify that `RegisterCustomer` correctly persists customer data to a real PostgreSQL database.
+This is because Go interfaces are implemented implicitly, so the repository implementation doesn't need to know about the interface at all.
+It also helps us avoid import cycles between packages.
+
+### Why the Interface Lives Here
+
+There's a very practical reason for keeping the interface where it's used: **it avoids import cycles**.
+
+The `db` package imports `http` types (it uses `http.RegisterCustomer` as an argument).
+If the interface lived in the `db` package, the `http` package would need to import `db` for the interface, and `db` already imports `http`.
+This creates an import cycle, and it won't compile.
 
 {{tip}}
 
-**[Integration tests](https://academy.threedots.tech/knowledge/integration-testing)** test your adapter in isolation from the rest of the application, but with real infrastructure (like a real database).
-
-|                      | Unit Tests         | Integration Tests             |
-|----------------------|--------------------|-------------------------------|
-| Needs infrastructure | No                 | Yes                           |
-| Execution speed      | Fast               | Fast (seconds)                |
-| What they test       | Logic in isolation | Adapter + real infrastructure |
-| Mocks                | Most dependencies  | Usually none                  |
-
-For more on where integration tests fit in the bigger picture, see [Microservices test architecture](https://threedots.tech/post/microservices-test-architecture/).
+This is a lightweight form of [Clean Architecture](https://threedots.tech/post/introducing-clean-architecture/): the handler defines its dependencies as interfaces, the database adapter implements them, and `backend/orders/module.go` connects the two.
+We don't need the full [Clean Architecture](https://academy.threedots.tech/knowledge/clean-architecture) setup here.
+It's good enough to keep the interface close to the handler to have a clear dependency flow.
 
 {{endtip}}
 
-You can run the tests locally with `task test-integration` (or `go test -tags integration ./...`).
-The build tag is there to prevent these tests from running in regular `task test` (or `go test ./...`) since they require a real database and are a bit slower than unit tests.
+### Decoupling
 
-The tests spin up a real PostgreSQL database, run migrations, and test the repository method directly.
-This catches real infrastructure issues that unit tests miss (like SQL syntax errors or mismatched field types).
-They're still fast enough to run frequently during development.
+After we inject the repository to the handler, the HTTP handler is shorter and simply calls the repository method.
+It still generates the UUIDv7 (that's not a database concern).
+
+```go
+func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error) {
+	customerUUID := common.NewUUIDv7()
+
+	err := h.customerRepository.RegisterCustomer(ctx, customerUUID, *request.Body)
+ 	if err != nil {
+		return nil, err
+	}
+
+	// ...
+```
+
+Now, the handler no longer imports the `db` package.
+If you read the handler code and can't tell what database it uses, that's a good sign.
+With a simple interface, we decoupled the two layers.
 
 {{tip}}
 
-Notice how the test uses [`cmp.Diff`](https://pkg.go.dev/github.com/google/go-cmp/cmp) to compare the expected and actual customer. **`cmp.Diff` is better than comparing field by field manually.** If you add a new field to the struct, the test will fail automatically because you didn't set the new field in the expected value. With field-by-field comparison, you'd likely forget to update the test.
-
-There's one gotcha, though: the test passes `cmpopts.EquateComparable(shared.SharedTypes...)` as an option. Types like `CountryCode` contain unexported fields (from the `Enum[T]` embedding), and `cmp.Diff` panics when comparing structs with unexported fields by default. [`EquateComparable`](https://pkg.go.dev/github.com/google/go-cmp/cmp/cmpopts) tells go-cmp to use Go's `==` operator for those types instead of inspecting their internals. The `shared.SharedTypes` slice lists all types that need this.
-
-We usually don't recommend `cmp.Diff` for production code since it relies on reflection. For tests, it's a great choice. You'll also see `cmpopts.SortSlices` in later exercises for comparing lists where order doesn't matter.
+**What about testing handlers?**
+For thin handlers like this one, we don't recommend writing unit tests with mock repositories.
+The maintenance cost rarely pays off.
+If a handler has complex logic, extract it into helper functions and test those directly.
+We'll cover [component tests](https://threedots.tech/post/microservices-test-architecture/) in a later module.
+They check the integration of the entire service and catch more real issues.
 
 {{endtip}}
 
@@ -61,30 +76,48 @@ We usually don't recommend `cmp.Diff` for production code since it relies on ref
 
 Exercise path: ./project
 
-Implement the `RegisterCustomer` method in `backend/orders/adapters/db/customer_repo.go`.
-
-Use the sqlc-generated `InsertCustomer` method exactly like in the HTTP handler before.
-
-You don't need to integrate the repository into the handler yet. We'll do that in the next exercise. For now, make the integration tests pass.
-
-You can run them locally like this (this is optional):
-
-- Run docker compose with `task up` or `docker compose up`
-- In another terminal, run `task test-integration` or `go test -tags integration ./...`
-
-{{tip}}
-
-We execute a single query here, so no explicit transaction is needed. A single `INSERT` is atomic on its own. We'll introduce transactions in the Advanced Repositories module when operations span multiple queries.
-
-You might notice that `dbmodels.New()` accepts a `DBTX` interface, not a concrete type. This will let us use it with transactions later.
-
-{{endtip}}
+1. **Define a `CustomerRepository` interface** in `backend/orders/api/http/handler.go` with a `RegisterCustomer` method matching the concrete repository from the previous exercise.
+2. Update the `Handler` struct and `NewHandler` to accept this interface instead of `*pgxpool.Pool`.
+3. **Update the `RegisterCustomer` HTTP handler** to call the repository's `RegisterCustomer()`.
+4. Inside the `Init` method in `backend/orders/module.go`, create the concrete repository with `db.NewCustomerRepository(m.pgxDb)` and pass it to `NewHandler`.
 
 {{hints}}
 
 {{hint 1}}
 
-A good starting point is simply copying what your HTTP handler currently does, then adjusting the code to fit the repository method signature.
+Your new handler should look like this:
+
+```go
+type Handler struct {
+	customerRepository CustomerRepository
+}
+
+func NewHandler(
+	customerRepository CustomerRepository,
+) Handler {
+	if customerRepository == nil {
+		panic("customerRepository cannot be nil")
+ 	}
+
+	return Handler{
+		customerRepository: customerRepository,
+	}
+}
+```
+
+{{endhint}}
+
+{{hint 2}}
+
+Inject the dependency like this:
+
+```go
+func (m *Module) Init(ctx context.Context) error {
+	customerRepo := db.NewCustomerRepository(m.pgxDb)
+
+	httpHandler := http2.NewHandler(customerRepo)
+	// ...
+```
 
 {{endhint}}
 
