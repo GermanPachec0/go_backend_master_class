@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -34,7 +35,8 @@ func (r *CustomerRepository) RegisterCustomer(ctx context.Context, customer app.
 		PhoneNumber:  customer.PhoneNumber,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("insert customer failed: %w", err)
 	}
+
 	return nil
 }

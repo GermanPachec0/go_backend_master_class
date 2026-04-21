@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"fmt"
 
 	"eats/backend/common"
 	"eats/backend/common/shared"
@@ -9,37 +10,38 @@ import (
 )
 
 type Handler struct {
-	svc *app.Service
+	service *app.Service
 }
 
 func NewHandler(
-	svc *app.Service,
+	service *app.Service,
 ) Handler {
-	if svc == nil {
-		panic("svc cannot be nil")
+	if service == nil {
+		panic("service cannot be nil")
 	}
 
 	return Handler{
-		svc: svc,
+		service: service,
 	}
 }
 
 func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error) {
+	addr, err := openapiAddressToSharedAddress(request.Body.Address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid address: %w", err)
+	}
+
 	customerUUID := common.NewUUIDv7()
 
-	address, err := openapiAddressToSharedAddress(request.Body.Address)
-	if err != nil {
-		return nil, err
-	}
-	customer := app.Customer{
+	err = h.service.RegisterCustomer(ctx, app.Customer{
 		CustomerUUID: customerUUID,
 		Name:         request.Body.Name,
 		Email:        string(request.Body.Email),
-		Address:      address,
-		PhoneNumber:  request.Body.PhoneNumber,
-	}
-
-	err = h.svc.RegisterCustomer(ctx, customer)
+		// address should be ideally normalized to ensure consistent city names and postal codes
+		// across customers, restaurants, and delivery addresses
+		Address:     addr,
+		PhoneNumber: request.Body.PhoneNumber,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -49,18 +51,23 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 	}, nil
 }
 
+func openapiAddressToSharedAddress(addr Address) (shared.Address, error) {
+	sharedAddr, err := shared.NewAddress(
+		addr.Line1,
+		addr.Line2,
+		addr.PostalCode,
+		addr.City,
+		addr.CountryCode,
+	)
+	if err != nil {
+		return shared.Address{}, err
+	}
+
+	return sharedAddr, nil
+}
+
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {
 	RegisterHandlers(e, NewStrictHandler(handler, nil))
 
 	return nil
-}
-
-func openapiAddressToSharedAddress(addr Address) (shared.Address, error) {
-	return shared.Address{
-		City:        addr.City,
-		CountryCode: shared.CountryCode(addr.CountryCode),
-		Line1:       addr.Line1,
-		Line2:       addr.Line2,
-		PostalCode:  addr.PostalCode,
-	}, nil
 }
