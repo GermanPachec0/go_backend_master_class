@@ -1,74 +1,153 @@
-# Integrate Repository
+# Application Layer Types
 
-We have a working `CustomerRepository` covered by [integration tests](https://academy.threedots.tech/knowledge/integration-testing).
-But the HTTP handler still uses `*pgxpool.Pool` and talks to the database directly.
-Let's connect the [repository](https://academy.threedots.tech/knowledge/repository-pattern) to hide the database behind an interface.
+Take another look at your repository.
+Right now, `RegisterCustomer` takes `http.RegisterCustomer` directly: a type generated from the [OpenAPI](https://academy.threedots.tech/knowledge/openapi) spec.
+**That ties the database layer to the HTTP API.**
+If you change the API schema, you have to update the repository too, even though nothing about the database changed.
 
-### Injecting the Repository
+When the project is small, one type for everything feels like a reasonable shortcut.
+As it grows, coupling like this becomes a problem and is difficult to fix.
 
-We need to call the repository from the handler.
-First, we need to inject it in the same way we injected the database pool before.
-But this time, we'll use an interface instead of a concrete type.
+## When Types Diverge
 
-The handler declares what it needs as an interface with a single method: `RegisterCustomer`.
+Let's say the database needs a `PasswordHash` field that the HTTP API shouldn't expose.
+If you use the same type for both, you could add a `json:"-"` tag and call it a day.
+It'll work, although it's fragile and you could easily leak the field in some other context.
+
+With more similar specific fields, and more systems using the type, you end up with many hacks to make it all work.
+You work with multiple models but they're all tangled together in one struct.
+
+Changing anything about this struct becomes risky, because you don't know which systems depend on which fields.
+
+## Multiple Entry Points
+
+In production systems, HTTP is rarely the only API.
+You might also have [gRPC](https://academy.threedots.tech/knowledge/grpc), messages, CLI tools, or scheduled jobs.
+Each entry point needs to call the same business logic, but each one has its own data types.
+
+**If the logic lives inside the HTTP handler, you duplicate it for every new entry point.**
+
+The fix is to give each entry point one job: **map its incoming request to a common application type, call the application logic, and map the response.**
+
+## The Application Layer
+
+**Think of the [application layer](https://academy.threedots.tech/knowledge/application-service) as the glue that holds everything together.**
+It's the logic that remains when you strip away HTTP handling, database queries, and external API calls.
+It orchestrates what happens when a request arrives, without knowing how the request got there or where the data ends up.
+
+For now, there are just two components in the application layer: the `Customer` type and the `Service` struct.
+
+```mermaid
+graph LR
+    HTTP[HTTP Handler] --> Service[app.Service]
+    gRPC[gRPC Handler] --> Service
+    CLI[CLI / Jobs] --> Service
+    Service --> Repo[Repository]
+    Repo --> DB[(Database)]
+
+    classDef infra fill:#ffcdd2
+    classDef app fill:#c8e6c9
+    classDef db fill:#bbdefb
+
+    class HTTP,gRPC,CLI,Repo infra
+    class Service app
+    class DB db
+```
+
+The application service goes between the HTTP handler and the repository.
+It depends on the `CustomerRepository` interface:
 
 ```go
-type CustomerRepository interface {
-    RegisterCustomer(ctx context.Context, customerUUID common.UUID, customer RegisterCustomer) error
+type Service struct {
+	customerRepository CustomerRepository
+	modules            ModulesContract
 }
 ```
 
-In some languages, it's common to define interfaces close to the implementation.
-**In Go, we define the interface close to where it's used, in the handler file.**
+The `CustomerRepository` interface now lives in the `app` package too, next to the type it uses.
+The application layer owns the contract with the database:
 
-This is because Go interfaces are implemented implicitly, so the repository implementation doesn't need to know about the interface at all.
-It also helps us avoid import cycles between packages.
+```go
+type CustomerRepository interface {
+	RegisterCustomer(ctx context.Context, customer Customer) error
+}
+```
 
-### Why the Interface Lives Here
+Application types use either primitive or shared types, nothing specific to HTTP or the database.
+They are supposed to be generic. They could be used in any context, by any API or adapter.
 
-There's a very practical reason for keeping the interface where it's used: **it avoids import cycles**.
+```go
+type Customer struct {
+	CustomerUUID common.UUID
+	Name         string
+	Email        string
+	Address      shared.Address
+	PhoneNumber  string
+}
+```
 
-The `db` package imports `http` types (it uses `http.RegisterCustomer` as an argument).
-If the interface lived in the `db` package, the `http` package would need to import `db` for the interface, and `db` already imports `http`.
-This creates an import cycle, and it won't compile.
+The HTTP handler now maps request types to application types and calls the service method:
+
+```go
+err = h.service.RegisterCustomer(ctx, app.Customer{
+	CustomerUUID: customerUUID,
+	Name:         request.Body.Name,
+	Email:        string(request.Body.Email),
+	Address:      addr,
+	PhoneNumber:  request.Body.PhoneNumber,
+})
+```
+
+The handler converts `openapi_types.Email` to `string`, OpenAPI's `Address` to `shared.Address`, and constructs an `app.Customer`.
+On the other side, the repository receives `app.Customer` and maps it to database parameters.
+**Each layer converts between the generic app types and the types it needs.**
+
+{{conversation "From a Past Code Review"}}
+
+{{message "robert"}}
+
+Should we use positional arguments in struct literals? `app.Customer{customerUUID, name, email, addr, phone}` is shorter. And there's a safety benefit: when someone adds a new field to `Customer`, the positional version won't compile until you add the new value. With named fields, the compiler silently zero-initializes the missing field.
+
+{{endmessage}}
+
+{{message "milosz"}}
+
+That's a fair point about catching missing fields. But positional has a worse failure mode: if two adjacent fields have the same type (like `Name` and `Email`, both `string`), swapping them compiles fine and you get a silent bug. Named fields make the mapping explicit and reviewable.
+
+{{endmessage}}
+
+{{message "robert" "milosz:+1"}}
+
+So it's a tradeoff. Positional catches missing fields, named catches reordered fields and reads better. Both are valid.
+
+Let's stick to named fields here, but positional could also be fine as long as we have good test coverage to catch missing or swapped fields.
+
+{{endmessage}}
+
+{{endconversation}}
+
+The wiring happens in `backend/orders/module.go`.
+It creates the repository, passes it to `app.NewService`, and passes the service to the HTTP handler.
+
+The `Service` doesn't do much yet. It passes the call through to the repository. That's fine. It gives us the right structure to build on.
+
+If you'd like to read more about this approach, see our blog post: [How to implement Clean Architecture in Go](https://threedots.tech/post/introducing-clean-architecture/).
 
 {{tip}}
 
-This is a lightweight form of [Clean Architecture](https://threedots.tech/post/introducing-clean-architecture/): the handler defines its dependencies as interfaces, the database adapter implements them, and `backend/orders/module.go` connects the two.
-We don't need the full [Clean Architecture](https://academy.threedots.tech/knowledge/clean-architecture) setup here.
-It's good enough to keep the interface close to the handler to have a clear dependency flow.
+You may have noticed the `ModulesContract` interface in `app.Service`. It's empty for now. We'll use it soon for communication between modules.
 
 {{endtip}}
 
-### Decoupling
-
-After we inject the repository to the handler, the HTTP handler is shorter and simply calls the repository method.
-It still generates the UUIDv7 (that's not a database concern).
-
-```go
-func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error) {
-	customerUUID := common.NewUUIDv7()
-
-	err := h.customerRepository.RegisterCustomer(ctx, customerUUID, *request.Body)
- 	if err != nil {
-		return nil, err
-	}
-
-	// ...
-```
-
-Now, the handler no longer imports the `db` package.
-If you read the handler code and can't tell what database it uses, that's a good sign.
-With a simple interface, we decoupled the two layers.
-
 {{tip}}
 
-**What about testing handlers?**
-For thin handlers like this one, we don't recommend writing unit tests with mock repositories.
-The maintenance cost rarely pays off.
-If a handler has complex logic, extract it into helper functions and test those directly.
-We'll cover [component tests](https://threedots.tech/post/microservices-test-architecture/) in a later module.
-They check the integration of the entire service and catch more real issues.
+You might think this is too much ceremony for a `RegisterCustomer` call that just passes data through. We've heard that many times. Then we've watched those same teams struggle to add a single field, because it meant touching the HTTP handler, the database layer, and three shared types that were all tangled together. If you're taking this training, chances are you've seen projects like that too.
+
+Knowing how to use a pneumatic hammer doesn't mean you should nail every picture frame with it. For small applications with one entry point and straightforward data flow, skipping the application layer is fine. But the project in this training is deliberately complex, and **the application layer will shine as we add more features.**
+
+Remember, we're building a project that can keep growing while being maintained by a group of engineers.
+
+For more on this topic, see our podcast episode [Is Clean Architecture Overengineering?](https://threedots.tech/episode/is-clean-architecture-overengineering/) and our blog post [Common anti-patterns in Go web applications](https://threedots.tech/post/common-anti-patterns-in-go-web-applications/).
 
 {{endtip}}
 
@@ -76,31 +155,32 @@ They check the integration of the entire service and catch more real issues.
 
 Exercise path: ./project
 
-1. **Define a `CustomerRepository` interface** in `backend/orders/api/http/handler.go` with a `RegisterCustomer` method matching the concrete repository from the previous exercise.
-2. Update the `Handler` struct and `NewHandler` to accept this interface instead of `*pgxpool.Pool`.
-3. **Update the `RegisterCustomer` HTTP handler** to call the repository's `RegisterCustomer()`.
-4. Inside the `Init` method in `backend/orders/module.go`, create the concrete repository with `db.NewCustomerRepository(m.pgxDb)` and pass it to `NewHandler`.
+The `app` package scaffolding is already there with `Customer`, `CustomerRepository`, and `Service`.
+The `backend/orders/module.go` wiring and tests are already updated.
+
+Your job is to connect the two infrastructure sides (the HTTP handler and the database repository) to the new application layer.
+
+1. Update `backend/orders/api/http/handler.go` to depend on `*app.Service` instead of `CustomerRepository`. Map the HTTP request fields to `app.Customer` and call `RegisterCustomer`.
+2. Update `backend/orders/adapters/db/customer_repo.go` to accept `app.Customer` as an argument. Remove the old `http` import and the separate `customerUUID` parameter.
 
 {{hints}}
 
 {{hint 1}}
 
-Your new handler should look like this:
+Your HTTP handler should now look like this:
 
 ```go
 type Handler struct {
-	customerRepository CustomerRepository
+	service *app.Service
 }
 
-func NewHandler(
-	customerRepository CustomerRepository,
-) Handler {
-	if customerRepository == nil {
-		panic("customerRepository cannot be nil")
- 	}
+func NewHandler(service *app.Service) Handler {
+	if service == nil {
+		panic("service cannot be nil")
+	}
 
 	return Handler{
-		customerRepository: customerRepository,
+		service: service,
 	}
 }
 ```
@@ -109,14 +189,10 @@ func NewHandler(
 
 {{hint 2}}
 
-Inject the dependency like this:
+In `backend/orders/adapters/db/customer_repo.go`, change the signature to:
 
 ```go
-func (m *Module) Init(ctx context.Context) error {
-	customerRepo := db.NewCustomerRepository(m.pgxDb)
-
-	httpHandler := http2.NewHandler(customerRepo)
-	// ...
+func (r *CustomerRepository) RegisterCustomer(ctx context.Context, customer app.Customer) error {
 ```
 
 {{endhint}}
