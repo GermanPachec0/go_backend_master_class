@@ -28,7 +28,7 @@ func (r *CustomerRepository) RegisterCustomer(ctx context.Context, customer app.
 	queries := dbmodels.New(r.db)
 
 	err := queries.InsertCustomer(ctx, dbmodels.InsertCustomerParams{
-		CustomerUuid: customer.CustomerUUID,
+		CustomerUuid: customer.CustomerUUID.UUID,
 		Name:         customer.Name,
 		Email:        customer.Email,
 		Address:      customer.Address,

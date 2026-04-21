@@ -34,7 +34,7 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 	customerUUID := common.NewUUIDv7()
 
 	err = h.service.RegisterCustomer(ctx, app.Customer{
-		CustomerUUID: customerUUID,
+		CustomerUUID: app.CustomerUUID{UUID: customerUUID},
 		Name:         request.Body.Name,
 		Email:        string(request.Body.Email),
 		// address should be ideally normalized to ensure consistent city names and postal codes
