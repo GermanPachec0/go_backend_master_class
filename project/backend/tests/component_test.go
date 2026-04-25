@@ -1,11 +1,17 @@
 package tests_test
 
 import (
+	"eats/backend/common/testutils"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestComponent_CriticalFlow(t *testing.T) {
 	t.Parallel()
+	country := testutils.GenerateRandomCountry()
+	ctx := t.Context()
+	customerUUID := registerCustomerInCity(ctx, t, newTestClients(t), country, "Some City")
 
-	t.Error("TODO - implement me!")
+	assert.NotEmpty(t, customerUUID.UUID.String())
 }
