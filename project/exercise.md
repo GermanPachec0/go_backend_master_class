@@ -1,167 +1,141 @@
-# Component Tests
+# Currency Enum
 
-We already have [integration tests](https://academy.threedots.tech/knowledge/integration-testing) for our repositories, covering how adapters talk to the database.
+**Where do you keep a type that multiple modules need?**
 
-**The next step is [component tests](https://academy.threedots.tech/knowledge/component-test): verifying the full request lifecycle with the HTTP API.**
-You start the real service, connect to a real database, send an HTTP request, and check what comes back.
+Consider a `Currency` type.
+If it lives in `orders`, and another module needs it, then that module depends on `orders`.
+We want to avoid such coupling to keep modules independent.
 
-## Component Tests vs Other Tests
+There are two ways to go about this:
 
-Component tests sit in a sweet spot between unit and end-to-end tests.
-They verify complete business cases through your public API (HTTP), using real infrastructure, while mocking only external services:
+1. Keep a separate type for both modules.
+2. Put the type in a shared package that both modules import.
 
-| Feature / Test Type           | Unit                       | Integration  | Component        | End-to-End |
-|-------------------------------|----------------------------|--------------|------------------|------------|
-| **Needs infrastructure**      | No                         | Yes          | Yes              | Yes        |
-| **Use of external systems**   | No                         | No           | No               | Yes        |
-| **Focused on business cases** | Depends on the tested code | No           | Yes              | Yes        |
-| **Uses mocks or stubs**       | Most dependencies          | Usually none | External systems | None       |
-| **Tested API**                | Go package                 | Go package   | HTTP             | HTTP       |
-| **Execution speed**           | Fast                       | Fast         | Medium           | Slow       |
+It's a delicate balance, so you need to consider the specific use case.
+For our project, we'll keep `Currency` in the `common/shared` package, similarly to `CountryCode`.
 
-**Component tests cover the most ground per test.** If a component test passes, you know the handler, the [application layer](https://academy.threedots.tech/knowledge/application-service), and the [repository](https://academy.threedots.tech/knowledge/repository-pattern) all work together.
-Unit tests can be added later for edge cases and complex logic that component tests can't easily reach.
+`Currency` will also use the same `Enum[T]` pattern.
 
-Because you mock external systems, running component tests is much easier than end-to-end tests.
-You can test your service in isolation even if another service is down or has a broken contract.
+## Shared vs. Module-Specific Types
 
-Your aim is to have a component test for each critical path in your application.
+Currency works as a shared type because it's rather generic: a list of valid currency codes with no extra business logic.
+There is no validation beyond "is this a known code?", and no behavior specific to one module.
 
-## Independent Tests
+**Watch out for business logic in `common` packages.
+It's one of the worst sources of coupling.**
+Every module ends up depending on it, and changing shared behavior affects the entire project.
+
+Shared packages aren't forbidden, but keeping the logic there is almost always a bad idea.
+Stick to plain data types like `Currency` and `CountryCode`.
+
+If a module needed specialized currency logic (say, a pricing module supporting cryptocurrency codes that other modules don't recognize),
+adding those codes to the shared `Currency` would force every module to handle values it doesn't care about.
+In that case, the pricing module should define its own `Currency` type.
+
+**Share a type when it's used the same way everywhere.
+Keep it local when it has business logic or means different things in different modules.**
 
 {{conversation "From a Past Code Review"}}
 
 {{message "milosz"}}
 
-I see you added `t.Parallel()` to the test. Is it worth the effort for just one test?
+I'm a bit worried about putting `Currency` in `common/shared`. We've seen shared packages turn into dumping grounds. How do we keep it under control?
 
 {{endmessage}}
 
-{{message "robert" "milosz:+1"}}
+{{message "robert"}}
 
-Adding it now costs nothing and sets the right pattern. Without it, every new test runs sequentially, and the suite gets slow fast. More importantly, parallel tests force you to keep data isolated. If a test only works sequentially, it usually means it depends on shared state, and that's a bug waiting to happen.
+The rule I follow: a shared type should be a plain data type with no business logic. `Currency` is just a list of valid codes. If a module ever needs special currency behavior (like supporting crypto codes that other modules don't recognize), that module should define its own type.
+
+{{endmessage}}
+
+{{message "milosz" "robert:+1"}}
+
+So the test is: does every module use this type the same way? If yes, share it. If any module needs different behavior, keep it local.
 
 {{endmessage}}
 
 {{endconversation}}
 
-Each test should be independent and use `t.Parallel()`.
+## SharedTypes and cmp.Diff
 
-It's possible by using random data (like `testutils.GenerateRandomCountry()`).
+Before we get to the implementation, let's talk about why `Currency` needs to be registered in the `SharedTypes` slice.
 
-Every test creates its own data, so tests don't conflict even when running against the same database.
-
-The naive approach to independent tests is adding `t.Cleanup()` to delete modified rows or running `TRUNCATE TABLE` to reset the database.
-Don't do that. Tests like that are fragile and hard to maintain.
-As the suite grows, it'll be more painful to understand how the tests interact with each other and why they fail.
-
-**Each test should insert unique data and check only that data.**
-This way, you avoid shared fixtures, ordering dependencies, and flaky failures from leftover state.
-
-Because tests don't share data, they can run in parallel without interfering with each other.
-You get a fast feedback loop that stays reliable as the test suite grows.
-
-## `assert` vs `require`
-
-We use [`testify`](https://github.com/stretchr/testify) for assertions. It cuts a lot of boilerplate and offers two packages: `assert` and `require`.
-
-They work in a similar way, but **`require` stops the test immediately on failure. `assert` records the failure but lets the test continue.**
-
-Take a look at how `registerCustomerInCity` uses `require`.
-If the HTTP call fails, `require` stops the test with a clear message like "expected 201, got 500."
-
-{{codeFile "backend/tests/helpers_test.go"}}
+The `Enum[T]` generic type stores its value in an unexported field:
 
 ```go
-resp, err := deps.OrdersApiClients.RegisterCustomerWithResponse(ctx, customerToCreate)
-require.NoError(t, err)
-require.Equal(t, http.StatusCreated, resp.StatusCode())
-require.NotNil(t, resp.JSON201)
+type Enum[T Enumerable] struct {
+    value string  // unexported
+}
 ```
 
-If you used `assert` instead, the test would keep running after a failed HTTP call, try to read `resp.JSON201` (which is `nil`), and panic with a confusing nil pointer error instead of telling you the real problem.
+[`cmp.Diff`](https://pkg.go.dev/github.com/google/go-cmp/cmp), which we use in repository tests to compare structs, panics when it encounters unexported fields. It can't read them through reflection. Without special handling, comparing any struct that contains a `Currency` or `CountryCode` fails with:
 
-Use `require` for setup steps where failure means everything downstream is meaningless.
-Use `assert` for final assertions where the test is about to end anyway.
+```text
+cannot handle unexported field at {Address.CountryCode.Enum}.value
+```
 
-All helpers also call `t.Helper()`, so failure messages show the calling test function, not the line inside the helper.
+[`cmpopts.EquateComparable`](https://pkg.go.dev/github.com/google/go-cmp/cmp/cmpopts#EquateComparable) fixes this.
+It tells `cmp.Diff` to use Go's built-in `==` operator for specific types instead of inspecting their fields.
+The `SharedTypes` slice has all the types that need this:
 
-{{tip}}
+```go
+cmpopts.EquateComparable(shared.SharedTypes...)
+```
 
-The [Google Go Style Guide](https://google.github.io/styleguide/go/decisions.html) recommends against assertion libraries.
-Testify saves enough boilerplate that it's worth it for us.
-We didn't experience any downsides after using it for many years.
-
-{{endtip}}
-
-## How the Test Setup Works
-
-Let's trace through what happens when you run `go test`.
-
-`TestMain` is a special function recognized by `go test`.
-It works sort of like the `main` function but for tests.
-If present in a test package, Go calls it instead of running tests directly.
-You control what happens before and after all tests.
-
-In `backend/tests/setup_test.go`, `TestMain` does the following:
-
-1. Creates the generated [OpenAPI](https://academy.threedots.tech/knowledge/openapi) client pointing to `http://localhost:9090/`.
-2. Connects to PostgreSQL and starts the service with `backend.New(ctx, dbPgx, dbStd)`. It's the real service, not a mock.
-3. Starts the HTTP server in a goroutine and polls `/health` until ready.
-4. Stores the API client in a package-level `deps` variable that all tests access.
-5. Calls `m.Run()` to run all tests, then shuts down gracefully.
-
-Once this setup is ready, every component test in the package reuses it.
-
-We also have a bunch of helpers in `backend/tests/helpers_test.go`. They use `gofakeit` to generate random names, emails, and addresses.
-
-{{tip}}
-
-You'll also see gateway-related code in the test dependencies. We'll cover the gateway in a later module. For now, it's there as a placeholder.
-
-{{endtip}}
-
-## Further Reading
-
-- [Database Integration Testing in Go](https://threedots.tech/post/database-integration-testing/) - Fast, parallel database tests with real PostgreSQL in Docker.
-- [Go Test Parallelism](https://threedots.tech/post/go-test-parallelism/) - Why `t.Parallel()` matters and common pitfalls.
-- [Microservices Test Architecture](https://threedots.tech/post/microservices-test-architecture/) - How component tests fit alongside unit, integration, and e2e tests.
+Once you add `Currency{}` to `SharedTypes`, every test that uses this option picks it up automatically.
 
 ## Exercise
 
 Exercise path: ./project
 
-Write your first component test to verify that registering a customer works end-to-end.
+Create a `Currency` enum in `backend/common/shared/currency.go`, following the `CountryCode` pattern:
 
-In `backend/tests/component_test.go`, replace `t.Error("TODO")` with a real test:
-
-1. Generate a random country with `testutils.GenerateRandomCountry()`.
-2. Call `registerCustomerInCity(ctx, t, country, "Some city")` to register a customer and capture the returned UUID.
-3. Assert the customer UUID is not empty using `assert.NotEmpty()`.
-
-You can run tests locally with `task test-component` (make sure Docker is running with `task up` first). This is optional: the `tdl` CLI handles everything for you.
-
-(If you don't use Task, run `go test ./backend/tests/...` and `docker compose up` instead.)
+1. Create a `CurrencyType` string type with a `Values()` method returning:
+    ```go
+    []string{"USD", "EUR", "GBP", "JPY", "PLN"}
+    ```
+2. Create a `Currency` struct embedding `Enum[CurrencyType]`
+3. Add a `Code() string` method on `Currency` returning the string value
+4. Add a `MustNewCurrency(value string) Currency` constructor (works like `MustNewCountryCode`)
+5. Add `Currency{}` to the `SharedTypes` slice in `backend/common/shared/types.go`
 
 {{hints}}
 
 {{hint 1}}
 
-**Use `t.Context()` for the context argument.**
-
-It's a context that gets canceled when the test times out or is stopped.
+For the constructor, use `UnmarshalText` to validate the input, just like `MustNewCountryCode` does.
+Look at the `CountryCode` implementation in `backend/common/shared/country_code.go` for the exact pattern.
 
 {{endhint}}
 
 {{hint 2}}
 
-Here's the full implementation:
+Here's one way to implement it:
 
 ```go
-ctx := t.Context()
-country := testutils.GenerateRandomCountry()
-customerUUID := registerCustomerInCity(ctx, t, country, "Some city")
-assert.NotEmpty(t, customerUUID)
+type Currency struct {
+	Enum[CurrencyType]
+}
+
+func (c Currency) Code() string {
+	return c.value
+}
+
+type CurrencyType string
+
+func (c CurrencyType) Values() []string {
+	return []string{"USD", "EUR", "GBP", "JPY", "PLN"}
+}
+
+func MustNewCurrency(value string) Currency {
+	c := Currency{}
+	err := c.UnmarshalText([]byte(value))
+	if err != nil {
+		panic(fmt.Errorf("error unmarshalling currency value: %s", value))
+	}
+	return c
+}
 ```
 
 {{endhint}}
