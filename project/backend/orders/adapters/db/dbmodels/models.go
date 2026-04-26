@@ -5,7 +5,6 @@
 package dbmodels
 
 import (
-	"eats/backend/common"
 	"eats/backend/common/shared"
 	"eats/backend/orders/app"
 	"github.com/shopspring/decimal"
@@ -20,16 +19,16 @@ type OrdersCustomer struct {
 }
 
 type OrdersRestaurant struct {
-	RestaurantUuid common.UUID
+	RestaurantUuid app.RestaurantUUID
 	Name           string
 	Description    string
-	Address        []byte
-	Currency       string
+	Address        shared.Address
+	Currency       shared.Currency
 }
 
 type OrdersRestaurantMenuItem struct {
-	RestaurantMenuItemUuid common.UUID
-	RestaurantUuid         common.UUID
+	RestaurantMenuItemUuid app.RestaurantMenuItemUUID
+	RestaurantUuid         app.RestaurantUUID
 	Name                   string
 	GrossPrice             decimal.Decimal
 	Ordering               float64

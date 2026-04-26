@@ -21,7 +21,7 @@ func GenerateRandomOpenapiAddress(country shared.CountryCode) client.Address {
 
 	addr := client.Address{
 		City:        address.City,
-		CountryCode: country.Code(),
+		CountryCode: country,
 		Line1:       address.Street,
 		Line2:       address.Unit,
 		PostalCode:  address.Zip,
@@ -52,7 +52,7 @@ func GenerateOpenapiAddressInCity(country shared.CountryCode, city string) clien
 
 	addr := client.Address{
 		City:        city,
-		CountryCode: country.Code(),
+		CountryCode: country,
 		Line1:       address.Street,
 		Line2:       address.Unit,
 		PostalCode:  address.Zip,

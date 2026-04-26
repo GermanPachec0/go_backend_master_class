@@ -8,7 +8,8 @@ package dbmodels
 import (
 	"context"
 
-	"eats/backend/common"
+	"eats/backend/common/shared"
+	"eats/backend/orders/app"
 	"github.com/shopspring/decimal"
 )
 
@@ -21,7 +22,7 @@ WHERE
 	restaurant_uuid = $1
 `
 
-func (q *Queries) GetRestaurant(ctx context.Context, restaurantUuid common.UUID) (OrdersRestaurant, error) {
+func (q *Queries) GetRestaurant(ctx context.Context, restaurantUuid app.RestaurantUUID) (OrdersRestaurant, error) {
 	row := q.db.QueryRow(ctx, getRestaurant, restaurantUuid)
 	var i OrdersRestaurant
 	err := row.Scan(
@@ -35,18 +36,22 @@ func (q *Queries) GetRestaurant(ctx context.Context, restaurantUuid common.UUID)
 }
 
 const getRestaurantMenu = `-- name: GetRestaurantMenu :many
-SELECT r.restaurant_menu_item_uuid, r.restaurant_uuid, r.name, r.gross_price, r.ordering, r.is_archived 
-FROM orders.restaurant_menu_items r
-WHERE is_archived = FALSE
-AND restaurant_uuid = $1
-ORDER BY ordering ASC
+SELECT
+	restaurant_menu_items.restaurant_menu_item_uuid, restaurant_menu_items.restaurant_uuid, restaurant_menu_items.name, restaurant_menu_items.gross_price, restaurant_menu_items.ordering, restaurant_menu_items.is_archived
+FROM
+	orders.restaurant_menu_items AS restaurant_menu_items
+WHERE
+	restaurant_uuid = $1 AND
+	is_archived = FALSE
+ORDER BY
+	ordering ASC
 `
 
 type GetRestaurantMenuRow struct {
 	OrdersRestaurantMenuItem OrdersRestaurantMenuItem
 }
 
-func (q *Queries) GetRestaurantMenu(ctx context.Context, restaurantUuid common.UUID) ([]GetRestaurantMenuRow, error) {
+func (q *Queries) GetRestaurantMenu(ctx context.Context, restaurantUuid app.RestaurantUUID) ([]GetRestaurantMenuRow, error) {
 	rows, err := q.db.Query(ctx, getRestaurantMenu, restaurantUuid)
 	if err != nil {
 		return nil, err
@@ -75,20 +80,21 @@ func (q *Queries) GetRestaurantMenu(ctx context.Context, restaurantUuid common.U
 
 const upsertRestaurant = `-- name: UpsertRestaurant :one
 INSERT INTO orders.restaurants (restaurant_uuid, name, description, address, currency)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (restaurant_uuid) DO UPDATE
-SET name = EXCLUDED.name,	
+VALUES
+	($1, $2, $3, $4, $5)
+ON CONFLICT (restaurant_uuid) DO UPDATE SET
+	name = EXCLUDED.name,
 	description = EXCLUDED.description,
 	address = EXCLUDED.address
 RETURNING restaurant_uuid, name, description, address, currency
 `
 
 type UpsertRestaurantParams struct {
-	RestaurantUuid common.UUID
+	RestaurantUuid app.RestaurantUUID
 	Name           string
 	Description    string
-	Address        []byte
-	Currency       string
+	Address        shared.Address
+	Currency       shared.Currency
 }
 
 func (q *Queries) UpsertRestaurant(ctx context.Context, arg UpsertRestaurantParams) (OrdersRestaurant, error) {
@@ -110,29 +116,36 @@ func (q *Queries) UpsertRestaurant(ctx context.Context, arg UpsertRestaurantPara
 	return i, err
 }
 
-const upsertRestaurantMenuItem = `-- name: UpsertRestaurantMenuItem :one
-INSERT INTO orders.restaurant_menu_items (restaurant_menu_item_uuid, restaurant_uuid, name, gross_price, ordering, is_archived)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (restaurant_menu_item_uuid) DO UPDATE
-SET restaurant_uuid = EXCLUDED.restaurant_uuid,
+const upsertRestaurantMenuItem = `-- name: UpsertRestaurantMenuItem :exec
+INSERT INTO orders.restaurant_menu_items (
+	restaurant_menu_item_uuid,
+	restaurant_uuid,
+	name,
+	gross_price,
+	ordering,
+	is_archived
+)
+VALUES
+	($1, $2, $3, $4, $5, $6)
+ON CONFLICT (restaurant_menu_item_uuid) DO UPDATE SET
+	restaurant_uuid = EXCLUDED.restaurant_uuid,
 	name = EXCLUDED.name,
 	gross_price = EXCLUDED.gross_price,
 	ordering = EXCLUDED.ordering,
 	is_archived = EXCLUDED.is_archived
-RETURNING restaurant_menu_item_uuid, restaurant_uuid, name, gross_price, ordering, is_archived
 `
 
 type UpsertRestaurantMenuItemParams struct {
-	RestaurantMenuItemUuid common.UUID
-	RestaurantUuid         common.UUID
+	RestaurantMenuItemUuid app.RestaurantMenuItemUUID
+	RestaurantUuid         app.RestaurantUUID
 	Name                   string
 	GrossPrice             decimal.Decimal
 	Ordering               float64
 	IsArchived             bool
 }
 
-func (q *Queries) UpsertRestaurantMenuItem(ctx context.Context, arg UpsertRestaurantMenuItemParams) (OrdersRestaurantMenuItem, error) {
-	row := q.db.QueryRow(ctx, upsertRestaurantMenuItem,
+func (q *Queries) UpsertRestaurantMenuItem(ctx context.Context, arg UpsertRestaurantMenuItemParams) error {
+	_, err := q.db.Exec(ctx, upsertRestaurantMenuItem,
 		arg.RestaurantMenuItemUuid,
 		arg.RestaurantUuid,
 		arg.Name,
@@ -140,14 +153,5 @@ func (q *Queries) UpsertRestaurantMenuItem(ctx context.Context, arg UpsertRestau
 		arg.Ordering,
 		arg.IsArchived,
 	)
-	var i OrdersRestaurantMenuItem
-	err := row.Scan(
-		&i.RestaurantMenuItemUuid,
-		&i.RestaurantUuid,
-		&i.Name,
-		&i.GrossPrice,
-		&i.Ordering,
-		&i.IsArchived,
-	)
-	return i, err
+	return err
 }

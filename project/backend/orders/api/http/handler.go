@@ -30,10 +30,10 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
 	}
 
-	customerUUID := common.NewUUIDv7()
+	customerUUID := CustomerUUID{common.NewUUIDv7()}
 
 	err = h.service.RegisterCustomer(ctx, app.Customer{
-		CustomerUUID: app.CustomerUUID{UUID: customerUUID},
+		CustomerUUID: customerUUID,
 		Name:         request.Body.Name,
 		Email:        string(request.Body.Email),
 		// address should be ideally normalized to ensure consistent city names and postal codes
@@ -46,19 +46,17 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 	}
 
 	return RegisterCustomer201JSONResponse{
-		CustomerUuid: CustomerUUID(customerUUID),
+		CustomerUuid: customerUUID,
 	}, nil
 }
 
 func openapiAddressToSharedAddress(addr Address) (shared.Address, error) {
-	countrycode := shared.MustNewCountryCode(addr.CountryCode)
-
 	sharedAddr, err := shared.NewAddress(
 		addr.Line1,
 		addr.Line2,
 		addr.PostalCode,
 		addr.City,
-		countrycode,
+		addr.CountryCode,
 	)
 	if err != nil {
 		return shared.Address{}, err

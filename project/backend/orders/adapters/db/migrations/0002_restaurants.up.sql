@@ -22,5 +22,4 @@ CREATE TABLE orders.restaurant_menu_items
 	FOREIGN KEY (restaurant_uuid) REFERENCES orders.restaurants (restaurant_uuid)
 );
 
-
 COMMIT;

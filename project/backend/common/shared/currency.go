@@ -14,6 +14,15 @@ func (c Currency) Code() string {
 	return c.String()
 }
 
+func (c Currency) DecimalPlaces() int {
+	switch c.String() {
+	case "JPY":
+		return 0
+	default:
+		return 2
+	}
+}
+
 type CurrencyType string
 
 func (c CurrencyType) Values() []string {
