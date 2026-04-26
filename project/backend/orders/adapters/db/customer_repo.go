@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"eats/backend/common"
+	"eats/backend/common/log"
 	"eats/backend/orders/adapters/db/dbmodels"
 	"eats/backend/orders/app"
 )
@@ -25,18 +28,23 @@ func NewCustomerRepository(db *pgxpool.Pool) *CustomerRepository {
 }
 
 func (r *CustomerRepository) RegisterCustomer(ctx context.Context, customer app.Customer) error {
-	queries := dbmodels.New(r.db)
+	return common.UpdateInTx(ctx, r.db, func(ctx context.Context, tx pgx.Tx) error {
+		log.FromContext(ctx).With("customer_uuid", customer.CustomerUUID).Info("Registering customer")
 
-	err := queries.InsertCustomer(ctx, dbmodels.InsertCustomerParams{
-		CustomerUuid: customer.CustomerUUID,
-		Name:         customer.Name,
-		Email:        customer.Email,
-		Address:      customer.Address,
-		PhoneNumber:  customer.PhoneNumber,
+		queries := dbmodels.New(tx)
+
+		err := queries.InsertCustomer(ctx, dbmodels.InsertCustomerParams{
+			CustomerUuid: customer.CustomerUUID,
+			Name:         customer.Name,
+			Email:        customer.Email,
+			Address:      customer.Address,
+			PhoneNumber:  customer.PhoneNumber,
+		})
+		if err != nil {
+			return fmt.Errorf("insert customer failed: %w", err)
+		}
+
+		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("insert customer failed: %w", err)
-	}
 
-	return nil
 }
