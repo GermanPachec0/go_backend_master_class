@@ -13,9 +13,6 @@ import (
 	"net/url"
 	"strings"
 
-	"eats/backend/common/shared"
-	"eats/backend/orders/app"
-
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
@@ -38,10 +35,10 @@ type Address struct {
 }
 
 // CountryCode Country code in ISO 3166-1 alpha-2 format
-type CountryCode = shared.CountryCode
+type CountryCode = string
 
 // CustomerUUID UUID of a customer
-type CustomerUUID = app.CustomerUUID
+type CustomerUUID = openapi_types.UUID
 
 // ErrorDetails defines model for ErrorDetails.
 type ErrorDetails struct {

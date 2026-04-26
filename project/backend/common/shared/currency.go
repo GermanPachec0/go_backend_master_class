@@ -18,7 +18,6 @@ type CurrencyType string
 
 func (c CurrencyType) Values() []string {
 	return []string{"USD", "EUR", "GBP", "JPY", "PLN"}
-
 }
 
 func MustNewCurrency(value string) Currency {
