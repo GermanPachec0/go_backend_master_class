@@ -44,15 +44,16 @@ func (r *RestaurantRepository) UpsertRestaurant(ctx context.Context, restaurantU
 		Name:           restaurant.Name,
 		Description:    restaurant.Description,
 		Address:        addresses,
-		Currency:       restaurant.Currency.String(),
+		Currency:       restaurant.Currency.Code(),
 	})
+
 	if err != nil {
 		return fmt.Errorf("upsert restaurant failed: %w", err)
 	}
 
 	// Currency is immutable after creation - the upsert doesn't update it.
 	// Check here catches attempts to change it and returns a clear error.
-	if dbRestaurant.Currency != restaurant.Currency.String() {
+	if dbRestaurant.Currency != restaurant.Currency.Code() {
 		return common.NewInvalidInputError("cannot-change-currency", "cannot change restaurant currency once set")
 	}
 

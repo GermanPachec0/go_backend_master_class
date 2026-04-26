@@ -8,7 +8,6 @@ import (
 	"eats/backend/common"
 	"eats/backend/common/shared"
 	"eats/backend/orders/app"
-
 	"github.com/shopspring/decimal"
 )
 

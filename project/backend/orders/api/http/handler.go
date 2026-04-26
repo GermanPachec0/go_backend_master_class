@@ -51,7 +51,6 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 }
 
 func openapiAddressToSharedAddress(addr Address) (shared.Address, error) {
-
 	countrycode := shared.MustNewCountryCode(addr.CountryCode)
 
 	sharedAddr, err := shared.NewAddress(
