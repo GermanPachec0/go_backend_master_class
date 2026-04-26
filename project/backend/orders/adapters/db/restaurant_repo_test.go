@@ -148,6 +148,53 @@ func TestUpsertRestaurant_UpdateMenuItems(t *testing.T) {
 	}
 }
 
+func TestUpsertRestaurant_ArchiveRemovedMenuItems(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPool := testutils.NewDB(t)
+	repo := db.NewRestaurantRepository(dbPool)
+
+	restaurantUUID := app.RestaurantUUID{common.NewUUIDv7()}
+	onboardRestaurant := newTestOnboardRestaurant()
+
+	// Ensure we have at least 3 menu positions for this test
+	for len(onboardRestaurant.MenuItems) < 3 {
+		onboardRestaurant.MenuItems = append(onboardRestaurant.MenuItems, newTestMenuItem())
+	}
+
+	// Create restaurant with menu
+	err := repo.UpsertRestaurant(ctx, restaurantUUID, onboardRestaurant)
+	require.NoError(t, err)
+
+	// Get initial menu
+	initialMenu, err := repo.GetRestaurantMenu(ctx, restaurantUUID)
+	require.NoError(t, err)
+	initialCount := len(initialMenu.Positions)
+	assert.GreaterOrEqual(t, initialCount, 3)
+
+	// Remove one menu position
+	updatedRestaurant := onboardRestaurant
+	removedPosition := updatedRestaurant.MenuItems[1]
+	updatedRestaurant.MenuItems = append(
+		updatedRestaurant.MenuItems[:1],
+		updatedRestaurant.MenuItems[2:]...,
+	)
+
+	err = repo.UpsertRestaurant(ctx, restaurantUUID, updatedRestaurant)
+	require.NoError(t, err)
+
+	// Verify menu position was archived (not returned in menu)
+	menu, err := repo.GetRestaurantMenu(ctx, restaurantUUID)
+	require.NoError(t, err)
+	assert.Len(t, menu.Positions, initialCount-1)
+
+	// Verify removed position is not in the menu
+	for _, pos := range menu.Positions {
+		assert.NotEqual(t, removedPosition.MenuItemUUID, pos.MenuItemUUID)
+	}
+}
+
 func TestUpsertRestaurant_PreventCurrencyChange(t *testing.T) {
 	t.Parallel()
 
