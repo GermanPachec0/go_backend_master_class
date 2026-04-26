@@ -1,151 +1,102 @@
-# Menu Item Archiving
+# Onboard Restaurant Endpoint
 
-{{message "robert"}}
+{{message "milosz"}}
 
-Restaurants can now be created and updated, along with their menu items.
-But what happens when a restaurant removes a menu item from their offering?
-
-We don't want to delete the row. Other parts of the system (like past orders) may still reference it.
-Instead, we archive the item: set `is_archived = TRUE` so it no longer shows up in the active menu.
+Restaurants won't onboard themselves on our platform.
+Instead, our operations team will use an internal dashboard to do it.
 
 {{endmessage}}
 
-The upsert handles adding and updating menu items. But it doesn't handle *removal*.
-If a restaurant sends an updated menu without an item that was there before, we need to detect that and archive it.
+With the repository and [application service](https://academy.threedots.tech/knowledge/application-service) in place, let's now expose an HTTP endpoint for the frontend to use.
 
-The full upsert flow now looks like this:
+The new HTTP handler (`OnboardRestaurant`) follows the same pattern as `RegisterCustomer`, so most of this should feel familiar.
+The new part is mapping a collection of menu items from the request body to application types.
 
-1. Fetch current menu items from the database
-2. Upsert the restaurant record
-3. Upsert each menu item
-4. Compare current items against the incoming list to find which ones were removed
-5. Archive the removed items
-
-All of these operations need to happen atomically.
-If one of them fails, the database would end up in an inconsistent state.
-That's why we wrap everything in a transaction.
-
-A database transaction groups multiple queries into a single unit of work.
-Either all of them succeed (commit), or none of them take effect (rollback).
-Without a transaction, a failure halfway through would leave the database with some changes applied and others not.
-
-## Transactions and UpdateInTx
-
-We prepared a helper for this: `common.UpdateInTx`.
-
-```go
-return common.UpdateInTx(ctx, r.db, func(ctx context.Context, tx pgx.Tx) error {
-    queries := dbmodels.New(tx) // Use queries with the transaction
-    // ... all operations use the same transaction
-    return nil
-})
+```mermaid
+graph LR
+    HTTP["HTTP Request<br/>PUT /restaurant/onboard"] --> Handler["OnboardRestaurant<br/>Handler"]
+    Handler -->|"map request"| Service["app.Service<br/>.OnboardRestaurant()"]
+    Service --> Repo["RestaurantRepository<br/>.UpsertRestaurant()"]
+    Repo --> DB[(PostgreSQL)]
 ```
 
-It takes an anonymous function as an argument. Whatever happens inside that function and uses the `tx` is part of one transaction.
-If the function returns an error, the transaction rolls back automatically. If it returns nil, the transaction commits.
+## The Handler
 
-It starts a transaction with [Repeatable Read](https://www.postgresql.org/docs/current/transaction-iso.html#XACT-REPEATABLE-READ) isolation, which prevents phantom reads.
-If two concurrent transactions conflict, PostgreSQL raises a serialization error, and `UpdateInTx` [retries](https://academy.threedots.tech/knowledge/retry) automatically with backoff.
+You need to add the `OnboardRestaurant` handler in `backend/orders/api/http/handler.go`.
+It should map the [OpenAPI](https://academy.threedots.tech/knowledge/openapi) request types to application types and call `h.service.OnboardRestaurant`.
 
-The key is passing `tx` to `dbmodels.New()`, instead of `r.db`.
-This makes all queries use the same transaction.
+It's similar to the `RegisterCustomer` handler with one difference: **you need to map `request.Body.MenuItems` to `[]app.MenuItem` in a loop.**
+`RegisterCustomer` has no equivalent collection, so you can't copy this part directly.
 
-{{tip}}
-**All code inside the `UpdateInTx` closure re-executes on every retry.** When PostgreSQL detects a serialization conflict, `UpdateInTx` rolls back and runs the entire function again. This is fine for database queries, but if you put HTTP calls, [gRPC](https://academy.threedots.tech/knowledge/grpc) calls, or any external service calls inside the closure, those get repeated too.
+The restaurant UUID comes from `request.RestaurantUuid`, a path parameter. You'll need a `float64()` cast for the `Ordering` field.
+Convert the address to the application type the same way you did for `RegisterCustomer`.
 
-Move external calls outside the closure. Compute everything you need first, then pass the results into the transaction. If you need strong consistency between the external call and the database write, use explicit locking (e.g., `SELECT FOR UPDATE`) instead of relying on retries.
+The OpenAPI spec includes an `Operator-UUID` header in the request.
+It identifies the person from the operations team who performs the onboarding.
+In a production system, this would come from some kind of API gateway doing authentication before routing the request to our service.
+You don't need to use it for now.
 
-We'll see this pattern in action when we implement handlers in later modules.
-{{endtip}}
+## Wiring
 
-## The ANY Operator
+To wire everything together, add `restaurantRepository` as a parameter to `NewService` in `backend/orders/app/service.go`. Add a nil check following the existing pattern for `customerRepository`, and remove the TODO comment.
 
-To archive multiple items in a single query, we can use the `ANY` operator with a UUID array:
-
-```sql
-UPDATE orders.restaurant_menu_items
-SET is_archived = TRUE
-WHERE restaurant_menu_item_uuid = ANY ($1::UUID[])
-```
-
-It's similar to `WHERE id IN (1, 2, 3)`, but `IN` requires a fixed list of values. **`ANY` works with a single array parameter, which is what sqlc needs.**
-
-The `$1::UUID[]` syntax casts the parameter to a UUID array type, and sqlc maps it to `[]common.UUID` in Go.
+Then create the repository in `backend/orders/module.go` using `db.NewRestaurantRepository(m.pgxDb)` and pass it to `app.NewService`.
 
 ## Exercise
 
 Exercise path: ./project
 
-The [integration tests](https://academy.threedots.tech/knowledge/integration-testing) verify that removed menu items are **archived, not deleted**.
-An item that was in the previous menu but is missing from the new one should no longer appear in `GetRestaurantMenu` results.
+1. **Regenerate the OpenAPI code** by running `task gen` or `go generate ./...`.
 
-Here's what you need to do:
+2. **Implement `OnboardRestaurant`** on `Handler` in `backend/orders/api/http/handler.go`.
+    * Map the request body fields to `app.OnboardRestaurant` and `[]app.MenuItem`.
+    * Call `h.service.OnboardRestaurant`.
+    * Return `OnboardRestaurant204Response{}`.
 
-1. Add the `ArchiveMenuItems` query to `backend/orders/adapters/db/queries/restaurants.sql`:
-    * Use `ANY` with a UUID array to archive multiple items in a single query
-2. Run `task gen` or `go generate ./...` to regenerate the Go code
-3. **Wrap `UpsertRestaurant` in `common.UpdateInTx`** in `backend/orders/adapters/db/restaurant_repo.go`:
-    * Pass `tx` to `dbmodels.New()` instead of `r.db`
-    * Before upserting, fetch current menu items with `GetRestaurantMenu`
-    * After upserting, compare current UUIDs against incoming UUIDs to find removed items
-    * Archive any removed items
-4. **Wrap `RegisterCustomer` in `common.UpdateInTx`** in `backend/orders/adapters/db/customer_repo.go`:
-    * While a transaction is not required for a single INSERT, it'll come in handy when we extend customer registration to include more operations.
+3. **Inject `restaurantRepository`** into `NewService` in `backend/orders/app/service.go`. Add the `RestaurantRepository` parameter, a nil check, and the struct field. Remove the existing TODO comment.
+
+4. **Wire the repository** in `backend/orders/module.go`. Create `restaurantRepo` using `db.NewRestaurantRepository(m.pgxDb)` and pass it to `app.NewService`.
+
+The tests verify that your endpoint accepts restaurant data, returns HTTP 204, and persists it to the database.
 
 {{hints}}
 
 {{hint 1}}
 
-The full flow inside `UpsertRestaurant` has five steps, all within a single `UpdateInTx` call:
+The menu items mapping is the only part you can't copy from `RegisterCustomer`. You need to loop over `request.Body.MenuItems` and build a `[]app.MenuItem` slice. Each `MenuItem` has `MenuItemUUID`, `Name`, `GrossPrice`, and `Ordering` fields.
 
-1. `GetRestaurantMenu` to fetch what's currently in the database
-2. `UpsertRestaurant` to insert or update the restaurant record (already implemented)
-3. Loop through incoming `restaurant.MenuItems`, calling `UpsertRestaurantMenuItem` for each (already implemented)
-4. Compare current menu item UUIDs against the incoming list to find removed items
-5. Call `ArchiveMenuItems` for any existing items not in the new list
+The `Ordering` field requires a `float64()` cast because the OpenAPI type is `number`, but the application type uses `float64`.
 
 {{endhint}}
 
 {{hint 2}}
 
-You need this query in `restaurants.sql`:
-
-```sql
--- name: ArchiveMenuItems :exec
-UPDATE
-	orders.restaurant_menu_items
-SET
-	is_archived = TRUE
-WHERE
-	restaurant_menu_item_uuid = ANY ($1::UUID[])
-;
-```
-
-{{endhint}}
-
-{{hint 3}}
-
-The archive logic compares two lists. Collect UUIDs of current items (from `GetRestaurantMenu`), then loop through them.
-For each current UUID, check if it exists in the incoming `restaurant.MenuItems`.
-If not found, add it to a `toArchive` slice:
+The handler signature and the menu items mapping look like this:
 
 ```go
-menuItemsToArchive := make([]common.UUID, 0)
-for _, currentUUID := range currentMenuItemsUUIDs {
-    found := false
-    for _, newItem := range restaurant.MenuItems {
-        if currentUUID == newItem.MenuItemUUID {
-            found = true
-            break
-        }
+func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestaurantRequestObject) (OnboardRestaurantResponseObject, error) {
+    var menuItems []app.MenuItem
+    for _, item := range request.Body.MenuItems {
+        menuItems = append(menuItems, app.MenuItem{
+            MenuItemUUID: item.Uuid,
+            Name:         item.Name,
+            GrossPrice:   item.GrossPrice,
+            Ordering:     float64(item.Ordering),
+        })
     }
-    if !found {
-        menuItemsToArchive = append(menuItemsToArchive, currentUUID.UUID)
-    }
-}
+
+    // ...
 ```
 
-Then, if `len(menuItemsToArchive) > 0`, call `ArchiveMenuItems` with that slice.
+You need a new dependency in the application service constructor:
+
+```go
+func NewService(
+    customerRepository CustomerRepository,
+    restaurantRepository RestaurantRepository,
+    modules ModulesContract,
+) *Service {
+```
 
 {{endhint}}
 
