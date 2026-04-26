@@ -29,7 +29,7 @@ func TestRegisterCustomer(t *testing.T) {
 	customerRepo := db.NewCustomerRepository(dbPool)
 
 	// Create a customer
-	customerUUID := app.CustomerUUID{common.NewUUIDv7()}
+	customerUUID := common.NewUUIDv7()
 	customer := app.Customer{
 		CustomerUUID: customerUUID,
 		Name:         gofakeit.Name(),
