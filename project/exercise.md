@@ -1,101 +1,271 @@
-# Onboard Restaurant Endpoint
+# Quotes Repository
 
-{{message "milosz"}}
+{{message "robert"}}
 
-Restaurants won't onboard themselves on our platform.
-Instead, our operations team will use an internal dashboard to do it.
+When a customer picks items from a restaurant's menu, the system creates a **quote**: a snapshot of the price that locks in the subtotal, fees, tax, and delivery cost.
+The customer can then place an order from this quote before it expires.
+
+We use this approach so the customer doesn't get surprised by a different price at checkout.
+It could happen that a restaurant updates the prices or the delivery fee changes while the customer is browsing the menu.
+The quote guarantees the customer pays the price they saw.
+
+We've built the [application layer](https://academy.threedots.tech/knowledge/application-service): validation, the `CreateQuote` service method, application types, and [integration tests](https://academy.threedots.tech/knowledge/integration-testing).
+The database migration for `orders.quotes` and `orders.quote_items` tables is also in place.
+Your task is, again, the repository.
 
 {{endmessage}}
 
-With the repository and [application service](https://academy.threedots.tech/knowledge/application-service) in place, let's now expose an HTTP endpoint for the frontend to use.
+To create a quote, we need to fetch some details from the database (current prices, currency, address),
+do some calculations, and store the quote in the database.
 
-The new HTTP handler (`OnboardRestaurant`) follows the same pattern as `RegisterCustomer`, so most of this should feel familiar.
-The new part is mapping a collection of menu items from the request body to application types.
+We could do it all in the repository method.
+But the logic for turning raw data into a `Quote` belongs in the app layer, not the repository.
+Oh, and we want to keep the entire operation in one transaction.
+How to best model this?
 
-```mermaid
-graph LR
-    HTTP["HTTP Request<br/>PUT /restaurant/onboard"] --> Handler["OnboardRestaurant<br/>Handler"]
-    Handler -->|"map request"| Service["app.Service<br/>.OnboardRestaurant()"]
-    Service --> Repo["RestaurantRepository<br/>.UpsertRestaurant()"]
-    Repo --> DB[(PostgreSQL)]
+We'll use the `updateFn` callback pattern.
+
+## The `updateFn` Callback
+
+Take a look at the `OrderRepository` interface:
+
+{{codeFile "backend/orders/app/orders.go"}}
+
+```go
+type OrderRepository interface {
+    CreateQuote(
+        ctx context.Context,
+        restaurantUUID RestaurantUUID,
+        menuItems CreateQuoteItems,
+        updateFn func(
+            ctx context.Context,
+            menuItems map[RestaurantMenuItemUUID]MenuItem,
+            restaurantCurrency shared.Currency,
+            restaurantAddress shared.Address,
+        ) (Quote, []QuoteMenuItem, error),
+    ) (Quote, error)
+}
 ```
 
-## The Handler
+`CreateQuote` doesn't receive a ready-made `Quote` struct to persist. Instead, it receives an `updateFn` callback.
 
-You need to add the `OnboardRestaurant` handler in `backend/orders/api/http/handler.go`.
-It should map the [OpenAPI](https://academy.threedots.tech/knowledge/openapi) request types to application types and call `h.service.OnboardRestaurant`.
+The repository fetches data from the database (menu items and restaurant details), passes it to the callback, and the callback returns the quote to persist.
 
-It's similar to the `RegisterCustomer` handler with one difference: **you need to map `request.Body.MenuItems` to `[]app.MenuItem` in a loop.**
-`RegisterCustomer` has no equivalent collection, so you can't copy this part directly.
+**The callback keeps business logic in the app layer while the repository handles persistence atomically.**
 
-The restaurant UUID comes from `request.RestaurantUuid`, a path parameter. You'll need a `float64()` cast for the `Ordering` field.
-Convert the address to the application type the same way you did for `RegisterCustomer`.
+The callback is already written in `Service.CreateQuote`.
+It validates that menu items aren't archived, verifies the delivery address is in the restaurant's zone, and calculates pricing.
 
-The OpenAPI spec includes an `Operator-UUID` header in the request.
-It identifies the person from the operations team who performs the onboarding.
-In a production system, this would come from some kind of API gateway doing authentication before routing the request to our service.
-You don't need to use it for now.
+It returns a `Quote` and `[]QuoteMenuItem` for the repository to persist.
 
-## Wiring
+Your job is to call it with the right data and persist what it returns.
 
-To wire everything together, add `restaurantRepository` as a parameter to `NewService` in `backend/orders/app/service.go`. Add a nil check following the existing pattern for `customerRepository`, and remove the TODO comment.
+## Batch Inserts with `:copyfrom`
 
-Then create the repository in `backend/orders/module.go` using `db.NewRestaurantRepository(m.pgxDb)` and pass it to `app.NewService`.
+A quote can have many items. You could insert them one by one in a loop, but sqlc supports a better way.
+**The [`:copyfrom`](https://docs.sqlc.dev/en/latest/howto/insert.html#using-copyfrom) annotation generates a batch insert using PostgreSQL's [COPY protocol](https://www.postgresql.org/docs/current/sql-copy.html).**
+You can pass all items in a single call.
+
+The SQL looks like a regular INSERT:
+
+```sql
+-- name: AddQuoteItems :copyfrom
+INSERT INTO orders.quote_items (
+    quote_item_uuid,
+    quote_uuid,
+    menu_item_uuid,
+    gross_price,
+    quantity
+)
+VALUES
+    ($1, $2, $3, $4, $5);
+```
+
+The `:copyfrom` annotation makes sqlc generate a function that takes a slice:
+
+```go
+func (q *Queries) AddQuoteItems(ctx context.Context, arg []AddQuoteItemsParams) (int64, error)
+```
+
+It'll insert all the items at once. The `int64` return value is the number of inserted rows.
+
+For a handful of items, individual inserts would work fine. But `:copyfrom` scales better, and the syntax is simpler.
+
+{{tip}}
+
+For a deeper look at the callback pattern and why we use one repository per [Aggregate](https://academy.threedots.tech/knowledge/aggregate) (not per table), see [The Repository Pattern in Go](https://threedots.tech/post/repository-pattern-in-go/) and [Database Transactions in Go](https://threedots.tech/post/database-transactions-in-go/).
+
+{{endtip}}
 
 ## Exercise
 
 Exercise path: ./project
 
-1. **Regenerate the OpenAPI code** by running `task gen` or `go generate ./...`.
+Start with a few supporting files:
 
-2. **Implement `OnboardRestaurant`** on `Handler` in `backend/orders/api/http/handler.go`.
-    * Map the request body fields to `app.OnboardRestaurant` and `[]app.MenuItem`.
-    * Call `h.service.OnboardRestaurant`.
-    * Return `OnboardRestaurant204Response{}`.
+1. In `backend/orders/adapters/db/queries/orders.sql` add two queries:
+    * `AddQuote :exec` that inserts into `orders.quotes`.
+    * `AddQuoteItems :copyfrom` that inserts into `orders.quote_items`.
+2. In `backend/orders/adapters/db/queries/restaurants.sql` add a `GetMenuItemsByUUIDs :many` query that fetches menu items filtered by restaurant UUID and a list of menu item UUIDs.
+Use the `ANY ($2::UUID[])` syntax you learned in the restaurants repository.
+3. In `backend/orders/adapters/db/sqlc.yaml` add type overrides for `orders.quotes` and `orders.quote_items` columns, following the same pattern you used for restaurants.
 
-3. **Inject `restaurantRepository`** into `NewService` in `backend/orders/app/service.go`. Add the `RestaurantRepository` parameter, a nil check, and the struct field. Remove the existing TODO comment.
+Run `task gen` or `go generate ./...` after adding the queries.
 
-4. **Wire the repository** in `backend/orders/module.go`. Create `restaurantRepo` using `db.NewRestaurantRepository(m.pgxDb)` and pass it to `app.NewService`.
+Then, **implement the `OrderRepository` interface**:
 
-The tests verify that your endpoint accepts restaurant data, returns HTTP 204, and persists it to the database.
+4. Create a new file: `backend/orders/adapters/db/orders_repo.go`.
+5. Inside, add an `OrdersRepo` struct with a constructor (just like in the other repositories).
+6. Add the `CreateQuote` method, (implement the `app.OrderRepository` interface).
+Here's the flow inside the repository's `CreateQuote`:
+
+    - Receive `restaurantUUID`, `menuItems` (what the customer wants), and `updateFn`
+    - Inside `UpdateInTx`, fetch the menu items from the database using their UUIDs
+    - Fetch the restaurant for its currency and address
+    - Call `updateFn` with the fetched data. It returns a `Quote` and `[]QuoteMenuItem`
+    - Persist the quote with an `AddQuote` query
+    - Persist all quote items with `AddQuoteItems`
+    - Return the created quote
+
+**Remember: pass `tx` to `dbmodels.New()`, not `r.db`.**
+All queries must run inside one transaction.
+The `tx` comes from the `UpdateInTx` callback.
+
+Most of the work is in `orders_repo.go`. The SQL queries and config are a few lines each.
+
+The platform runs integration tests in `backend/orders/adapters/db/orders_repo_test.go`.
 
 {{hints}}
 
 {{hint 1}}
 
-The menu items mapping is the only part you can't copy from `RegisterCustomer`. You need to loop over `request.Body.MenuItems` and build a `[]app.MenuItem` slice. Each `MenuItem` has `MenuItemUUID`, `Name`, `GrossPrice`, and `Ordering` fields.
+Here's the structure of the `CreateQuote` method:
 
-The `Ordering` field requires a `float64()` cast because the OpenAPI type is `number`, but the application type uses `float64`.
+```go
+func (r *OrdersRepo) CreateQuote(
+    ctx context.Context,
+    restaurantID app.RestaurantUUID,
+    menuItems app.CreateQuoteItems,
+    updateFn func(
+        ctx context.Context,
+        menuItems map[app.RestaurantMenuItemUUID]app.MenuItem,
+        restaurantCurrency shared.Currency,
+        restaurantAddress shared.Address,
+    ) (app.Quote, []app.QuoteMenuItem, error),
+) (app.Quote, error) {
+    var quote app.Quote
+
+    err := common.UpdateInTx(ctx, r.db, func(ctx context.Context, tx pgx.Tx) error {
+        queries := dbmodels.New(tx)
+
+        // TODO
+
+        return nil
+    })
+
+    return quote, err
+}
+```
+
+You'll need a helper to convert `[]app.QuoteMenuItem` to `[]dbmodels.AddQuoteItemsParams`, and another to convert the DB menu item rows to `map[app.RestaurantMenuItemUUID]app.MenuItem`.
 
 {{endhint}}
 
 {{hint 2}}
 
-The handler signature and the menu items mapping look like this:
+You can use these SQL queries:
 
-```go
-func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestaurantRequestObject) (OnboardRestaurantResponseObject, error) {
-    var menuItems []app.MenuItem
-    for _, item := range request.Body.MenuItems {
-        menuItems = append(menuItems, app.MenuItem{
-            MenuItemUUID: item.Uuid,
-            Name:         item.Name,
-            GrossPrice:   item.GrossPrice,
-            Ordering:     float64(item.Ordering),
-        })
-    }
+```sql
+-- name: AddQuote :exec
+INSERT INTO orders.quotes (
+	quote_uuid,
+	customer_uuid,
+	restaurant_uuid,
+	delivery_address,
+	items_subtotal_gross,
+	service_fee_gross,
+	delivery_fee_gross,
+	total_amount_gross,
+	total_tax,
+	created_at,
+	currency
+)
+VALUES
+	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+;
 
-    // ...
+-- name: AddQuoteItems :copyfrom
+INSERT INTO orders.quote_items (
+	quote_item_uuid,
+	quote_uuid,
+	menu_item_uuid,
+	gross_price,
+	quantity
+)
+VALUES
+	($1, $2, $3, $4, $5);
 ```
 
-You need a new dependency in the application service constructor:
+{{endhint}}
 
-```go
-func NewService(
-    customerRepository CustomerRepository,
-    restaurantRepository RestaurantRepository,
-    modules ModulesContract,
-) *Service {
+{{hint 3}}
+
+You need this query to fetch menu items by their UUIDs:
+
+```sql
+-- name: GetMenuItemsByUUIDs :many
+SELECT
+	restaurant_menu_items.*
+FROM
+	orders.restaurant_menu_items AS restaurant_menu_items
+WHERE
+	restaurant_uuid = $1 AND
+	restaurant_menu_item_uuid = ANY ($2::UUID[])
+;
+```
+
+{{endhint}}
+
+{{hint 4}}
+
+Here's the sqlc mapping you need:
+
+```yaml
+          - column: "orders.quotes.customer_uuid"
+            go_type:
+              import: "eats/backend/orders/app"
+              type: "CustomerUUID"
+
+          - column: "orders.quotes.restaurant_uuid"
+            nullable: true
+            go_type:
+              import: "eats/backend/orders/app"
+              type: "RestaurantUUID"
+
+          - column: "orders.quotes.quote_uuid"
+            go_type:
+              import: "eats/backend/orders/app"
+              type: "QuoteUUID"
+
+          - column: "orders.quotes.currency"
+            go_type:
+              import: "eats/backend/common"
+              type: "Currency"
+
+          - column: "orders.quotes.delivery_address"
+            go_type:
+              import: "eats/backend/common"
+              type: "Address"
+
+          - column: "orders.quote_items.quote_uuid"
+            go_type:
+              import: "eats/backend/orders/app"
+              type: "QuoteUUID"
+
+          - column: "orders.quote_items.menu_item_uuid"
+            go_type:
+              import: "eats/backend/orders/app"
+              type: "RestaurantMenuItemUUID"
 ```
 
 {{endhint}}
