@@ -48,9 +48,11 @@ ORDER BY
 	ordering ASC
 ;
 
-
 -- name: ArchiveMenuItems :exec
-UPDATE orders.restaurant_menu_items
-SET is_archived = TRUE
-WHERE restaurant_menu_item_uuid = ANY ($1::UUID[])
+UPDATE
+	orders.restaurant_menu_items
+SET
+	is_archived = TRUE
+WHERE
+	restaurant_menu_item_uuid = ANY ($1::UUID[])
 ;

@@ -29,14 +29,10 @@ func NewRestaurantRepository(db *pgxpool.Pool) *RestaurantRepository {
 }
 
 func (r *RestaurantRepository) UpsertRestaurant(ctx context.Context, restaurantUUID app.RestaurantUUID, restaurant app.OnboardRestaurant) error {
+
 	return common.UpdateInTx(ctx, r.db, func(ctx context.Context, tx pgx.Tx) error {
 		log.FromContext(ctx).With("restaurant_uuid", restaurantUUID).Info("Upserting restaurant")
-		tx, err := r.db.BeginTx(ctx, pgx.TxOptions{
-			IsoLevel: pgx.RepeatableRead,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to begin transaction: %w", err)
-		}
+
 		queries := dbmodels.New(tx)
 
 		getCurrentMenu, err := queries.GetRestaurantMenu(ctx, restaurantUUID)
@@ -45,11 +41,11 @@ func (r *RestaurantRepository) UpsertRestaurant(ctx context.Context, restaurantU
 		}
 
 		dbRestaurant, err := queries.UpsertRestaurant(ctx, dbmodels.UpsertRestaurantParams{
-			restaurantUUID,
-			restaurant.Name,
-			restaurant.Description,
-			restaurant.Address,
-			restaurant.Currency,
+			RestaurantUuid: restaurantUUID,
+			Name:           restaurant.Name,
+			Description:    restaurant.Description,
+			Address:        restaurant.Address,
+			Currency:       restaurant.Currency,
 		})
 		if err != nil {
 			return fmt.Errorf("upsert restaurant failed: %w", err)

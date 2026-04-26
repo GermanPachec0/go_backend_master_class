@@ -49,29 +49,35 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 }
 
 func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestaurantRequestObject) (OnboardRestaurantResponseObject, error) {
-	addr, err := openapiAddressToSharedAddress(request.Body.Address)
-	if err != nil {
-		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
+	if request.Params.OperatorUUID.IsZero() {
+		return nil, common.NewUnauthorizedError("missing-operator-uuid", "operator UUID is required")
 	}
 
-	menuItems := make([]app.MenuItem, len(request.Body.MenuItems))
-	for i, item := range request.Body.MenuItems {
-		menuItems[i] = app.MenuItem{
+	var menuItems []app.MenuItem
+	for _, item := range request.Body.MenuItems {
+		newItem := app.MenuItem{
 			Name:         item.Name,
 			MenuItemUUID: item.Uuid,
 			Ordering:     float64(item.Ordering),
 			GrossPrice:   item.GrossPrice,
 		}
+		menuItems = append(menuItems, newItem)
 	}
-	restaurantUUID := common.NewUUIDv7()
 
-	err = h.service.OnboardRestaurant(ctx, app.RestaurantUUID{UUID: restaurantUUID}, app.OnboardRestaurant{
-		Name:        request.Body.Name,
-		Description: request.Body.Description,
-		Currency:    request.Body.Currency,
-		Address:     addr,
-		MenuItems:   menuItems,
-	})
+	addr, err := openapiAddressToSharedAddress(request.Body.Address)
+	if err != nil {
+		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
+	}
+
+	err = h.service.OnboardRestaurant(ctx,
+		request.RestaurantUuid,
+		app.OnboardRestaurant{
+			Name:        request.Body.Name,
+			Description: request.Body.Description,
+			Currency:    request.Body.Currency,
+			Address:     addr,
+			MenuItems:   menuItems,
+		})
 	if err != nil {
 		return nil, err
 	}

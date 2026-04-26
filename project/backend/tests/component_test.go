@@ -1,8 +1,9 @@
 package tests_test
 
 import (
-	"eats/backend/common/testutils"
 	"testing"
+
+	"eats/backend/common/testutils"
 
 	"github.com/stretchr/testify/assert"
 )

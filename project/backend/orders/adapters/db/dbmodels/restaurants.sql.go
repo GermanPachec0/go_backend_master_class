@@ -15,9 +15,12 @@ import (
 )
 
 const archiveMenuItems = `-- name: ArchiveMenuItems :exec
-UPDATE orders.restaurant_menu_items
-SET is_archived = TRUE
-WHERE restaurant_menu_item_uuid = ANY ($1::UUID[])
+UPDATE
+	orders.restaurant_menu_items
+SET
+	is_archived = TRUE
+WHERE
+	restaurant_menu_item_uuid = ANY ($1::UUID[])
 `
 
 func (q *Queries) ArchiveMenuItems(ctx context.Context, dollar_1 []common.UUID) error {
