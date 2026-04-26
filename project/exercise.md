@@ -1,140 +1,248 @@
-# Currency Enum
-
-**Where do you keep a type that multiple modules need?**
-
-Consider a `Currency` type.
-If it lives in `orders`, and another module needs it, then that module depends on `orders`.
-We want to avoid such coupling to keep modules independent.
-
-There are two ways to go about this:
-
-1. Keep a separate type for both modules.
-2. Put the type in a shared package that both modules import.
-
-It's a delicate balance, so you need to consider the specific use case.
-For our project, we'll keep `Currency` in the `common/shared` package, similarly to `CountryCode`.
-
-`Currency` will also use the same `Enum[T]` pattern.
-
-## Shared vs. Module-Specific Types
-
-Currency works as a shared type because it's rather generic: a list of valid currency codes with no extra business logic.
-There is no validation beyond "is this a known code?", and no behavior specific to one module.
-
-**Watch out for business logic in `common` packages.
-It's one of the worst sources of coupling.**
-Every module ends up depending on it, and changing shared behavior affects the entire project.
-
-Shared packages aren't forbidden, but keeping the logic there is almost always a bad idea.
-Stick to plain data types like `Currency` and `CountryCode`.
-
-If a module needed specialized currency logic (say, a pricing module supporting cryptocurrency codes that other modules don't recognize),
-adding those codes to the shared `Currency` would force every module to handle values it doesn't care about.
-In that case, the pricing module should define its own `Currency` type.
-
-**Share a type when it's used the same way everywhere.
-Keep it local when it has business logic or means different things in different modules.**
-
-{{conversation "From a Past Code Review"}}
+# Restaurants Repository
 
 {{message "milosz"}}
 
-I'm a bit worried about putting `Currency` in `common/shared`. We've seen shared packages turn into dumping grounds. How do we keep it under control?
+With customers able to register, let's move to onboarding restaurants.
+Each restaurant needs an account created before they can receive orders.
+
+We've already implemented the [application layer](https://academy.threedots.tech/knowledge/application-service) for it.
+The `OnboardRestaurant` service method takes care of validation and calls the repository.
+
+Your task is to implement the repository method.
+There are [integration tests](https://academy.threedots.tech/knowledge/integration-testing) ready for it that verify the behavior you need to implement.
 
 {{endmessage}}
 
+The customer repository was just a single INSERT.
+Restaurant onboarding is more complex: a restaurant comes with menu items, and they need to be saved alongside the restaurant itself.
+
+Most of the code is already there, but you need to fill the gaps in the `UpsertRestaurant` method.
+
+## Upserts
+
+We want to create an *upsert* method: a query that inserts a new restaurant if it doesn't exist, or updates the existing one if it does.
+This way, the same method can be used for both creating and updating a restaurant.
+
+The same goes for each menu item.
+We need a query that handles both cases: insert if new, update if existing.
+
+**Upserts are [idempotent](https://academy.threedots.tech/knowledge/idempotency). Calling an upsert twice with the same data produces the same result.**
+This is important for [retry](https://academy.threedots.tech/knowledge/retry) logic and for making sure your endpoints are safe to call multiple times.
+
+In PostgreSQL, we can use `INSERT ... ON CONFLICT DO UPDATE` as an upsert.
+
+Take a look at the `UpsertRestaurant` query you already have:
+
+{{codeFile "backend/orders/adapters/db/queries/restaurants.sql"}}
+
+```sql
+INSERT INTO orders.restaurants (restaurant_uuid, name, description, address, currency)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (restaurant_uuid) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    address = EXCLUDED.address
+RETURNING *;
+```
+
+The `UPDATE` part runs if there's a conflict on `restaurant_uuid` (another row with this UUID already exists).
+
+The [`EXCLUDED`](https://www.postgresql.org/docs/current/sql-insert.html#SQL-ON-CONFLICT) keyword refers to the row that we tried to insert.
+So `EXCLUDED.name` means "the name value from the INSERT that conflicted."
+
+Notice that `currency` is NOT in the `SET` clause.
+Once a restaurant is created with a currency, it shouldn't change.
+
+The `UpsertRestaurant` method we created already checks this: after the upsert, if the returned `currency` differs from the requested one, it returns an error.
+
+{{conversation "From a Past Code Review"}}
+
 {{message "robert"}}
 
-The rule I follow: a shared type should be a plain data type with no business logic. `Currency` is just a list of valid codes. If a module ever needs special currency behavior (like supporting crypto codes that other modules don't recognize), that module should define its own type.
+Should we add a generic `UpdateRestaurant(fields map[string]interface{})` method? That way, we don't need a new repository method every time something changes.
 
 {{endmessage}}
 
 {{message "milosz" "robert:+1"}}
 
-So the test is: does every module use this type the same way? If yes, share it. If any module needs different behavior, keep it local.
+Specific methods like `UpsertRestaurant` tell you exactly what's happening at the call site. With a generic update, you lose type safety and can't tell from the code which fields are being modified. It's also harder to review and audit. If we need more operations later, we add more methods.
 
 {{endmessage}}
 
 {{endconversation}}
 
-## SharedTypes and cmp.Diff
+We'll need a similar query for upserting menu items. Something like:
 
-Before we get to the implementation, let's talk about why `Currency` needs to be registered in the `SharedTypes` slice.
+```sql
+INSERT INTO orders.restaurant_menu_items (
+	restaurant_menu_item_uuid,
+	restaurant_uuid,
+	name,
+	gross_price,
+	ordering,
+	is_archived
+)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (restaurant_menu_item_uuid) DO UPDATE SET ...
+```
 
-The `Enum[T]` generic type stores its value in an unexported field:
+## sqlc.embed
+
+To verify the data you save, you'll also need a query that fetches menu items.
+[`sqlc.embed`](https://docs.sqlc.dev/en/latest/howto/embedding.html) tells sqlc to generate a nested struct for the table's columns instead of flattening them:
+
+```sql
+SELECT sqlc.embed(restaurant_menu_items)
+FROM orders.restaurant_menu_items AS restaurant_menu_items
+WHERE restaurant_uuid = $1 AND is_archived = FALSE
+ORDER BY ordering ASC
+```
+
+**Without `sqlc.embed`, you'd access fields as `dbItem.RestaurantMenuItemUuid`. With it, fields are nested: `dbItem.OrdersRestaurantMenuItem.RestaurantMenuItemUuid`.**
+
+The nested struct prevents field name collisions when joining multiple tables. We're using it here so the query is ready for future JOINs.
+
+Note: when using embed, the table alias (`AS restaurant_menu_items`) is required.
+
+## Handling Money with Decimal Types
+
+The `restaurant_menu_items` table uses a `DECIMAL(10,2)` column for `gross_price`.
+By default, sqlc maps this to `pgtype.Numeric`, which is awkward to work with.
+We need to configure sqlc to use [shopspring/decimal](https://github.com/shopspring/decimal) instead.
+
+The override goes in the `overrides` section of `backend/orders/adapters/db/sqlc.yaml`:
+
+```yaml
+- db_type: "pg_catalog.numeric"
+  go_type:
+    import: "github.com/shopspring/decimal"
+    type: "Decimal"
+```
+
+Once it's in place, all database decimals will be represented by `decimal.Decimal`.
+
+{{tip}}
+**Never use `float64` for money!**
+
+Floating point math has precision issues that will cause real bugs in financial calculations:
 
 ```go
-type Enum[T Enumerable] struct {
-    value string  // unexported
+// This prints 9.999999999999831, not 10
+func main() {
+	var n float64 = 0
+	for i := 0; i < 1000; i++ {
+		n += 0.01
+	}
+	fmt.Println(n)
 }
+
 ```
 
-[`cmp.Diff`](https://pkg.go.dev/github.com/google/go-cmp/cmp), which we use in repository tests to compare structs, panics when it encounters unexported fields. It can't read them through reflection. Without special handling, comparing any struct that contains a `Currency` or `CountryCode` fails with:
+The [shopspring/decimal](https://github.com/shopspring/decimal) library provides arbitrary precision decimal arithmetic, making it safe for financial calculations.
 
-```text
-cannot handle unexported field at {Address.CountryCode.Enum}.value
-```
+Read more: [Why don't you just use float64?](https://github.com/shopspring/decimal?tab=readme-ov-file#why-dont-you-just-use-float64)
+{{endtip}}
 
-[`cmpopts.EquateComparable`](https://pkg.go.dev/github.com/google/go-cmp/cmp/cmpopts#EquateComparable) fixes this.
-It tells `cmp.Diff` to use Go's built-in `==` operator for specific types instead of inspecting their fields.
-The `SharedTypes` slice has all the types that need this:
+{{tip}}
 
-```go
-cmpopts.EquateComparable(shared.SharedTypes...)
-```
+You can run the tests locally with `task test-integration` if you want a faster feedback loop. Make sure Docker is running first (`task up`). This is optional. `tdl tr run` handles everything for you.
 
-Once you add `Currency{}` to `SharedTypes`, every test that uses this option picks it up automatically.
+If you don't use Task, run `docker compose up` and `go test -tags=integration ./...`.
+
+{{endtip}}
 
 ## Exercise
 
 Exercise path: ./project
 
-Create a `Currency` enum in `backend/common/shared/currency.go`, following the `CountryCode` pattern:
+The integration tests in `backend/orders/adapters/db/restaurant_repo_test.go` verify that:
 
-1. Create a `CurrencyType` string type with a `Values()` method returning:
-    ```go
-    []string{"USD", "EUR", "GBP", "JPY", "PLN"}
-    ```
-2. Create a `Currency` struct embedding `Enum[CurrencyType]`
-3. Add a `Code() string` method on `Currency` returning the string value
-4. Add a `MustNewCurrency(value string) Currency` constructor (works like `MustNewCountryCode`)
-5. Add `Currency{}` to the `SharedTypes` slice in `backend/common/shared/types.go`
+- Restaurants can be created and updated through upserts
+- Menu items are upserted correctly (names, prices, ordering)
+- Currency can't change after the restaurant is created
+- Repeated calls with the same data produce the same result **(idempotency)**
+
+Here's what you need to do:
+
+1. Add the decimal type mapping to `backend/orders/adapters/db/sqlc.yaml`
+2. Add the SQL queries to `backend/orders/adapters/db/queries/restaurants.sql`:
+    * `GetRestaurantMenu` - using `sqlc.embed` to return all active menu items for the restaurant
+    * `UpsertRestaurantMenuItem` - inserting a new menu item or updating an existing one (use `ON CONFLICT DO UPDATE`)
+3. Run `task gen` or `go generate ./...` to regenerate the Go code for the new queries
+4. **Add upserting menu items to `UpsertRestaurant` in `backend/orders/adapters/db/restaurant_repo.go`**:
+    * Loop through `restaurant.MenuItems` and upsert each one
+
+{{tip}}
+
+You may notice that we're not using transactions here, and there's no way to remove menu items yet. We'll add both in the next exercise.
+
+{{endtip}}
 
 {{hints}}
 
 {{hint 1}}
 
-For the constructor, use `UnmarshalText` to validate the input, just like `MustNewCountryCode` does.
-Look at the `CountryCode` implementation in `backend/common/shared/country_code.go` for the exact pattern.
+Because menu items use the restaurant UUID as a foreign key, you must upsert menu items after upserting the restaurant itself.
+Otherwise, you'd get foreign key violations when trying to insert menu items for a restaurant that doesn't exist yet.
 
 {{endhint}}
 
 {{hint 2}}
 
-Here's one way to implement it:
+You need these queries in `restaurants.sql`:
+
+```sql
+-- name: GetRestaurantMenu :many
+SELECT
+	sqlc.embed(restaurant_menu_items)
+FROM
+	orders.restaurant_menu_items AS restaurant_menu_items
+WHERE
+	restaurant_uuid = $1 AND
+	is_archived = FALSE
+ORDER BY
+	ordering ASC
+;
+
+-- name: UpsertRestaurantMenuItem :exec
+INSERT INTO orders.restaurant_menu_items (
+	restaurant_menu_item_uuid,
+	restaurant_uuid,
+	name,
+	gross_price,
+	ordering,
+	is_archived
+)
+VALUES
+	($1, $2, $3, $4, $5, $6)
+ON CONFLICT (restaurant_menu_item_uuid) DO UPDATE SET
+	restaurant_uuid = EXCLUDED.restaurant_uuid,
+	name = EXCLUDED.name,
+	gross_price = EXCLUDED.gross_price,
+	ordering = EXCLUDED.ordering,
+	is_archived = EXCLUDED.is_archived
+;
+```
+
+{{endhint}}
+
+{{hint 3}}
+
+The upsert loop is straightforward. After the restaurant upsert (which is already in place), loop through the incoming menu items:
 
 ```go
-type Currency struct {
-	Enum[CurrencyType]
-}
-
-func (c Currency) Code() string {
-	return c.value
-}
-
-type CurrencyType string
-
-func (c CurrencyType) Values() []string {
-	return []string{"USD", "EUR", "GBP", "JPY", "PLN"}
-}
-
-func MustNewCurrency(value string) Currency {
-	c := Currency{}
-	err := c.UnmarshalText([]byte(value))
-	if err != nil {
-		panic(fmt.Errorf("error unmarshalling currency value: %s", value))
-	}
-	return c
+for _, item := range restaurant.MenuItems {
+    err = queries.UpsertRestaurantMenuItem(ctx, dbmodels.UpsertRestaurantMenuItemParams{
+        RestaurantMenuItemUuid: item.MenuItemUUID,
+        RestaurantUuid:         restaurantUUID,
+        Name:                   item.Name,
+        GrossPrice:             item.GrossPrice,
+        Ordering:               item.Ordering,
+        IsArchived:             false,
+    })
+    if err != nil {
+        return fmt.Errorf("upsert restaurant menu position failed for menu position %s: %w", item.MenuItemUUID, err)
+    }
 }
 ```
 

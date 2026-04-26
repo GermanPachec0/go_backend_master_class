@@ -3,8 +3,9 @@ package app
 type ModulesContract interface{}
 
 type Service struct {
-	customerRepository CustomerRepository
-	modules            ModulesContract
+	customerRepository   CustomerRepository
+	restaurantRepository RestaurantRepository
+	modules              ModulesContract
 }
 
 func NewService(
@@ -17,6 +18,7 @@ func NewService(
 	if modules == nil {
 		panic("modules cannot be nil")
 	}
+	// TODO: inject restaurantRepository when implemented
 
 	return &Service{
 		customerRepository: customerRepository,
