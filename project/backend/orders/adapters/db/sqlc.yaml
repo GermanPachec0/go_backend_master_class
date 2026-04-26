@@ -18,7 +18,11 @@ sql:
               import: "time"
               type: "Time"
               pointer: true
-
+          
+          - db_type: "pg_catalog.numeric"
+            go_type:
+              import: "github.com/shopspring/decimal"
+              type: "Decimal"
           # Map non-nullable timestamptz to time.Time.
           - db_type: "timestamptz"
             go_type:
