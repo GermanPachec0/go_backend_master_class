@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/ThreeDotsLabs/humanslog v0.1.0
 	github.com/brianvoe/gofakeit/v7 v7.14.0
+	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
@@ -13,6 +14,7 @@ require (
 	github.com/labstack/gommon v0.4.2
 	github.com/lithammer/shortuuid/v3 v3.0.7
 	github.com/oapi-codegen/runtime v1.2.0
+	github.com/shopspring/decimal v1.4.0
 	github.com/stretchr/testify v1.11.1
 )
 
