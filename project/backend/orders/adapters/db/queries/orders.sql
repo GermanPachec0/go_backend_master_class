@@ -43,3 +43,17 @@ INSERT INTO orders.quotes (
 VALUES
 	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
+
+-- name: GetQuoteItems :many
+SELECT *
+FROM orders.quote_items
+WHERE quote_uuid = $1;
+
+-- name: GetQuote :one
+SELECT
+	*
+FROM
+	orders.quotes AS quotes
+WHERE
+	quote_uuid = $1
+LIMIT 1;
