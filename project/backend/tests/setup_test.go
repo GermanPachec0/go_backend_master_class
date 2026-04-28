@@ -56,7 +56,7 @@ func TestMain(m *testing.M) {
 
 	log.Init(slog.LevelInfo)
 
-	dsn := "postgresql://user:password@localhost:5432/eats"
+	dsn := os.Getenv("POSTGRES_URL")
 	if dsn == "" {
 		panic("POSTGRES_URL environment variable is not set")
 	}

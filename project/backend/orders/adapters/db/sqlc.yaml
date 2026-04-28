@@ -18,11 +18,7 @@ sql:
               import: "time"
               type: "Time"
               pointer: true
-          
-          - db_type: "pg_catalog.numeric"
-            go_type:
-              import: "github.com/shopspring/decimal"
-              type: "Decimal"
+
           # Map non-nullable timestamptz to time.Time.
           - db_type: "timestamptz"
             go_type:
@@ -75,40 +71,3 @@ sql:
             go_type:
               import: "eats/backend/orders/app"
               type: "RestaurantUUID"
-              
-          - column: "orders.quotes.customer_uuid"
-            go_type:
-              import: "eats/backend/orders/app"
-              type: "CustomerUUID"
-
-          - column: "orders.quotes.restaurant_uuid"
-            go_type:
-              import: "eats/backend/orders/app"
-              type: "RestaurantUUID"
-
-          - column: "orders.quotes.quote_uuid"
-            go_type:
-              import: "eats/backend/orders/app"
-              type: "QuoteUUID"
-
-          - column: "orders.quotes.currency"
-            go_type:
-              import: "eats/backend/common/shared"
-              type: "Currency"
-
-          - column: "orders.quotes.delivery_address"
-            go_type:
-              import: "eats/backend/common/shared"
-              type: "Address"
-
-          - column: "orders.quote_items.quote_uuid"
-            go_type:
-              import: "eats/backend/orders/app"
-              type: "QuoteUUID"
-
-          - column: "orders.quote_items.menu_item_uuid"
-            go_type:
-              import: "eats/backend/orders/app"
-              type: "RestaurantMenuItemUUID"
-
-
