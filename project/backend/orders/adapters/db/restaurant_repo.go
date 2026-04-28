@@ -44,11 +44,11 @@ func (r *RestaurantRepository) UpsertRestaurant(ctx context.Context, restaurantU
 		}
 
 		dbRestaurant, err := queries.UpsertRestaurant(ctx, dbmodels.UpsertRestaurantParams{
-			RestaurantUuid: restaurantUUID,
-			Name:           restaurant.Name,
-			Description:    restaurant.Description,
-			Address:        restaurant.Address,
-			Currency:       restaurant.Currency,
+			restaurantUUID,
+			restaurant.Name,
+			restaurant.Description,
+			restaurant.Address,
+			restaurant.Currency,
 		})
 		if err != nil {
 			return fmt.Errorf("upsert restaurant failed: %w", err)

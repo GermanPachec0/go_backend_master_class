@@ -46,17 +46,12 @@ func (a Address) IsZero() bool {
 }
 
 func (e *Address) Scan(src any) error {
-	var data []byte
-	switch v := src.(type) {
-	case string:
-		data = []byte(v)
-	case []byte:
-		data = v
-	default:
-		return fmt.Errorf("invalid type for %T: %T", src, src)
+	text, ok := src.(string)
+	if !ok {
+		return fmt.Errorf("invalid type for %T, expected string", src)
 	}
 
-	err := json.Unmarshal(data, e)
+	err := json.Unmarshal([]byte(text), e)
 	if err != nil {
 		return fmt.Errorf("error unmarshalling %T from json: %w", e, err)
 	}

@@ -30,59 +30,24 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
 	}
 
-	customerUUID := common.NewUUIDv7()
+	customerUUID := CustomerUUID{common.NewUUIDv7()}
 
 	err = h.service.RegisterCustomer(ctx, app.Customer{
-		CustomerUUID: app.CustomerUUID{UUID: customerUUID},
+		CustomerUUID: customerUUID,
 		Name:         request.Body.Name,
 		Email:        string(request.Body.Email),
-		Address:      addr,
-		PhoneNumber:  request.Body.PhoneNumber,
+		// address should be ideally normalized to ensure consistent city names and postal codes
+		// across customers, restaurants, and delivery addresses
+		Address:     addr,
+		PhoneNumber: request.Body.PhoneNumber,
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	return RegisterCustomer201JSONResponse{
-		CustomerUuid: app.CustomerUUID{UUID: customerUUID},
+		CustomerUuid: customerUUID,
 	}, nil
-}
-
-func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestaurantRequestObject) (OnboardRestaurantResponseObject, error) {
-	if request.Params.OperatorUUID.IsZero() {
-		return nil, common.NewUnauthorizedError("missing-operator-uuid", "operator UUID is required")
-	}
-
-	var menuItems []app.MenuItem
-	for _, item := range request.Body.MenuItems {
-		newItem := app.MenuItem{
-			Name:         item.Name,
-			MenuItemUUID: item.Uuid,
-			Ordering:     float64(item.Ordering),
-			GrossPrice:   item.GrossPrice,
-		}
-		menuItems = append(menuItems, newItem)
-	}
-
-	addr, err := openapiAddressToSharedAddress(request.Body.Address)
-	if err != nil {
-		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
-	}
-
-	err = h.service.OnboardRestaurant(ctx,
-		request.RestaurantUuid,
-		app.OnboardRestaurant{
-			Name:        request.Body.Name,
-			Description: request.Body.Description,
-			Currency:    request.Body.Currency,
-			Address:     addr,
-			MenuItems:   menuItems,
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	return OnboardRestaurant204Response{}, nil
 }
 
 func openapiAddressToSharedAddress(addr Address) (shared.Address, error) {
@@ -98,6 +63,44 @@ func openapiAddressToSharedAddress(addr Address) (shared.Address, error) {
 	}
 
 	return sharedAddr, nil
+}
+
+func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestaurantRequestObject) (OnboardRestaurantResponseObject, error) {
+	if request.Params.OperatorUUID.IsZero() {
+		return nil, common.NewUnauthorizedError("missing-operator-uuid", "operator UUID is required")
+	}
+
+	var menuItems []app.MenuItem
+	for _, item := range request.Body.MenuItems {
+		menuItems = append(menuItems, app.MenuItem{
+			MenuItemUUID: item.Uuid,
+			Name:         item.Name,
+			GrossPrice:   item.GrossPrice,
+			Ordering:     float64(item.Ordering),
+		})
+	}
+
+	addr, err := openapiAddressToSharedAddress(request.Body.Address)
+	if err != nil {
+		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
+	}
+
+	err = h.service.OnboardRestaurant(
+		ctx,
+		request.RestaurantUuid,
+		app.OnboardRestaurant{
+			request.Body.Name,
+			addr,
+			request.Body.Currency,
+			request.Body.Description,
+			menuItems,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return OnboardRestaurant204Response{}, nil
 }
 
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {
