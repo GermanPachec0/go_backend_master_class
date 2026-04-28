@@ -31,7 +31,6 @@ INSERT INTO orders.quotes (
 )
 VALUES
 	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-
 RETURNING quote_uuid, customer_uuid, restaurant_uuid, delivery_address, created_at, items_subtotal_gross, service_fee_gross, delivery_fee_gross, total_amount_gross, total_tax, currency
 `
 
