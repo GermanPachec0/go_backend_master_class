@@ -56,3 +56,14 @@ SET
 WHERE
 	restaurant_menu_item_uuid = ANY ($1::UUID[])
 ;
+
+
+-- name: GetMenuItemsByUUIDs :many
+SELECT
+	sqlc.embed(restaurant_menu_items)
+FROM
+	orders.restaurant_menu_items AS restaurant_menu_items
+WHERE
+	restaurant_uuid = $1 AND
+	restaurant_menu_item_uuid = ANY (sqlc.slice(menu_item_uuids))
+;

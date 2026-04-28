@@ -5,6 +5,9 @@
 package dbmodels
 
 import (
+	"time"
+
+	"eats/backend/common"
 	"eats/backend/common/shared"
 	"eats/backend/orders/app"
 	"github.com/shopspring/decimal"
@@ -16,6 +19,28 @@ type OrdersCustomer struct {
 	Email        string
 	Address      shared.Address
 	PhoneNumber  string
+}
+
+type OrdersQuote struct {
+	QuoteUuid          app.QuoteUUID
+	CustomerUuid       app.CustomerUUID
+	RestaurantUuid     app.RestaurantUUID
+	DeliveryAddress    shared.Address
+	CreatedAt          time.Time
+	ItemsSubtotalGross decimal.Decimal
+	ServiceFeeGross    decimal.Decimal
+	DeliveryFeeGross   decimal.Decimal
+	TotalAmountGross   decimal.Decimal
+	TotalTax           decimal.Decimal
+	Currency           shared.Currency
+}
+
+type OrdersQuoteItem struct {
+	QuoteItemUuid common.UUID
+	QuoteUuid     app.QuoteUUID
+	MenuItemUuid  app.RestaurantMenuItemUUID
+	GrossPrice    decimal.Decimal
+	Quantity      int32
 }
 
 type OrdersRestaurant struct {
