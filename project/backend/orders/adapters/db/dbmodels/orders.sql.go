@@ -15,7 +15,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-const addQuote = `-- name: AddQuote :one
+const addQuote = `-- name: AddQuote :exec
 INSERT INTO orders.quotes (
 	quote_uuid,
 	customer_uuid,
@@ -31,7 +31,6 @@ INSERT INTO orders.quotes (
 )
 VALUES
 	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING quote_uuid, customer_uuid, restaurant_uuid, delivery_address, created_at, items_subtotal_gross, service_fee_gross, delivery_fee_gross, total_amount_gross, total_tax, currency
 `
 
 type AddQuoteParams struct {
@@ -48,8 +47,9 @@ type AddQuoteParams struct {
 	Currency           shared.Currency
 }
 
-func (q *Queries) AddQuote(ctx context.Context, arg AddQuoteParams) (OrdersQuote, error) {
-	row := q.db.QueryRow(ctx, addQuote,
+// Quotes are immutable - no update query exists. If needed, create a new quote.
+func (q *Queries) AddQuote(ctx context.Context, arg AddQuoteParams) error {
+	_, err := q.db.Exec(ctx, addQuote,
 		arg.QuoteUuid,
 		arg.CustomerUuid,
 		arg.RestaurantUuid,
@@ -62,21 +62,7 @@ func (q *Queries) AddQuote(ctx context.Context, arg AddQuoteParams) (OrdersQuote
 		arg.CreatedAt,
 		arg.Currency,
 	)
-	var i OrdersQuote
-	err := row.Scan(
-		&i.QuoteUuid,
-		&i.CustomerUuid,
-		&i.RestaurantUuid,
-		&i.DeliveryAddress,
-		&i.CreatedAt,
-		&i.ItemsSubtotalGross,
-		&i.ServiceFeeGross,
-		&i.DeliveryFeeGross,
-		&i.TotalAmountGross,
-		&i.TotalTax,
-		&i.Currency,
-	)
-	return i, err
+	return err
 }
 
 type AddQuoteItemsParams struct {

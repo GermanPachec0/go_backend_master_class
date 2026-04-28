@@ -35,34 +35,30 @@ FROM
 	orders.restaurant_menu_items AS restaurant_menu_items
 WHERE
 	restaurant_uuid = $1 AND
-	restaurant_menu_item_uuid = ANY ($2)
+	restaurant_menu_item_uuid = ANY ($2::UUID[])
 `
 
 type GetMenuItemsByUUIDsParams struct {
 	RestaurantUuid app.RestaurantUUID
-	MenuItemUuids  []app.RestaurantMenuItemUUID
+	Column2        []common.UUID
 }
 
-type GetMenuItemsByUUIDsRow struct {
-	OrdersRestaurantMenuItem OrdersRestaurantMenuItem
-}
-
-func (q *Queries) GetMenuItemsByUUIDs(ctx context.Context, arg GetMenuItemsByUUIDsParams) ([]GetMenuItemsByUUIDsRow, error) {
-	rows, err := q.db.Query(ctx, getMenuItemsByUUIDs, arg.RestaurantUuid, arg.MenuItemUuids)
+func (q *Queries) GetMenuItemsByUUIDs(ctx context.Context, arg GetMenuItemsByUUIDsParams) ([]OrdersRestaurantMenuItem, error) {
+	rows, err := q.db.Query(ctx, getMenuItemsByUUIDs, arg.RestaurantUuid, arg.Column2)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetMenuItemsByUUIDsRow{}
+	items := []OrdersRestaurantMenuItem{}
 	for rows.Next() {
-		var i GetMenuItemsByUUIDsRow
+		var i OrdersRestaurantMenuItem
 		if err := rows.Scan(
-			&i.OrdersRestaurantMenuItem.RestaurantMenuItemUuid,
-			&i.OrdersRestaurantMenuItem.RestaurantUuid,
-			&i.OrdersRestaurantMenuItem.Name,
-			&i.OrdersRestaurantMenuItem.GrossPrice,
-			&i.OrdersRestaurantMenuItem.Ordering,
-			&i.OrdersRestaurantMenuItem.IsArchived,
+			&i.RestaurantMenuItemUuid,
+			&i.RestaurantUuid,
+			&i.Name,
+			&i.GrossPrice,
+			&i.Ordering,
+			&i.IsArchived,
 		); err != nil {
 			return nil, err
 		}

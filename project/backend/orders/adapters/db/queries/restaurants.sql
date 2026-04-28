@@ -48,6 +48,16 @@ ORDER BY
 	ordering ASC
 ;
 
+-- name: GetMenuItemsByUUIDs :many
+SELECT
+	restaurant_menu_items.*
+FROM
+	orders.restaurant_menu_items AS restaurant_menu_items
+WHERE
+	restaurant_uuid = $1 AND
+	restaurant_menu_item_uuid = ANY ($2::UUID[])
+;
+
 -- name: ArchiveMenuItems :exec
 UPDATE
 	orders.restaurant_menu_items
@@ -55,15 +65,4 @@ SET
 	is_archived = TRUE
 WHERE
 	restaurant_menu_item_uuid = ANY ($1::UUID[])
-;
-
-
--- name: GetMenuItemsByUUIDs :many
-SELECT
-	sqlc.embed(restaurant_menu_items)
-FROM
-	orders.restaurant_menu_items AS restaurant_menu_items
-WHERE
-	restaurant_uuid = $1 AND
-	restaurant_menu_item_uuid = ANY (sqlc.slice(menu_item_uuids))
 ;

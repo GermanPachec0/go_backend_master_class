@@ -41,6 +41,7 @@ func (r iteratorForAddQuoteItems) Err() error {
 	return nil
 }
 
+// :copyfrom uses PostgreSQL COPY for bulk inserts. See: https://docs.sqlc.dev/en/stable/howto/insert.html#using-copyfrom
 func (q *Queries) AddQuoteItems(ctx context.Context, arg []AddQuoteItemsParams) (int64, error) {
 	return q.db.CopyFrom(ctx, []string{"orders", "quote_items"}, []string{"quote_item_uuid", "quote_uuid", "menu_item_uuid", "gross_price", "quantity"}, &iteratorForAddQuoteItems{rows: arg})
 }

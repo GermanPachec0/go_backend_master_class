@@ -18,16 +18,19 @@ sql:
               import: "time"
               type: "Time"
               pointer: true
-          
-          - db_type: "pg_catalog.numeric"
-            go_type:
-              import: "github.com/shopspring/decimal"
-              type: "Decimal"
+
           # Map non-nullable timestamptz to time.Time.
           - db_type: "timestamptz"
             go_type:
               import: "time"
               type: "Time"
+
+          # Use shopspring/decimal for money - floats have precision issues.
+          # See: https://github.com/shopspring/decimal#why-dont-you-just-use-float64
+          - db_type: "pg_catalog.numeric"
+            go_type:
+              import: "github.com/shopspring/decimal"
+              type: "Decimal"
 
           - db_type: "uuid"
             nullable: false
@@ -75,13 +78,14 @@ sql:
             go_type:
               import: "eats/backend/orders/app"
               type: "RestaurantUUID"
-              
+
           - column: "orders.quotes.customer_uuid"
             go_type:
               import: "eats/backend/orders/app"
               type: "CustomerUUID"
 
           - column: "orders.quotes.restaurant_uuid"
+            nullable: true
             go_type:
               import: "eats/backend/orders/app"
               type: "RestaurantUUID"
@@ -110,5 +114,3 @@ sql:
             go_type:
               import: "eats/backend/orders/app"
               type: "RestaurantMenuItemUUID"
-
-

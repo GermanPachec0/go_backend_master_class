@@ -1,4 +1,3 @@
--- todo: implement
 BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS orders;

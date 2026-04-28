@@ -3,33 +3,32 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
+
+	pgx "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"eats/backend/common"
 	"eats/backend/common/shared"
 	"eats/backend/orders/adapters/db/dbmodels"
 	"eats/backend/orders/app"
-
-	pgx "github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type OrdersRepository struct {
+type OrdersRepo struct {
 	db *pgxpool.Pool
 }
 
-func NewOrdersRepository(db *pgxpool.Pool) *OrdersRepository {
+func NewOrdersRepository(db *pgxpool.Pool) *OrdersRepo {
 	if db == nil {
 		panic("db connection pool cannot be nil")
 	}
 
-	return &OrdersRepository{
-		db: db,
-	}
+	return &OrdersRepo{db: db}
 }
 
-func (r *OrdersRepository) CreateQuote(
+func (r *OrdersRepo) CreateQuote(
 	ctx context.Context,
-	restaurantUUID app.RestaurantUUID,
+	restaurantID app.RestaurantUUID,
 	menuItems app.CreateQuoteItems,
 	updateFn func(
 		ctx context.Context,
@@ -38,96 +37,102 @@ func (r *OrdersRepository) CreateQuote(
 		restaurantAddress shared.Address,
 	) (app.Quote, []app.QuoteMenuItem, error),
 ) (app.Quote, error) {
-	var finalQuote app.Quote
+	var quote app.Quote
+
 	err := common.UpdateInTx(ctx, r.db, func(ctx context.Context, tx pgx.Tx) error {
 		queries := dbmodels.New(tx)
 
-		menuItems, err := queries.GetMenuItemsByUUIDs(ctx, dbmodels.GetMenuItemsByUUIDsParams{
-			RestaurantUuid: restaurantUUID,
-			MenuItemUuids:  menuItems.MenuItemUUIDs(),
-		})
-		if err != nil {
-			return err
-		}
-
-		restaurant, err := queries.GetRestaurant(ctx, restaurantUUID)
-		if err != nil {
-			return err
-		}
-
-		menuItemsMap := make(map[app.RestaurantMenuItemUUID]app.MenuItem)
+		menuItemsUUIDs := make([]common.UUID, 0, len(menuItems))
 		for _, item := range menuItems {
-			menuItemsMap[app.RestaurantMenuItemUUID(item.OrdersRestaurantMenuItem.RestaurantMenuItemUuid)] = app.MenuItem{
-				MenuItemUUID: app.RestaurantMenuItemUUID(item.OrdersRestaurantMenuItem.RestaurantMenuItemUuid),
-				Name:         item.OrdersRestaurantMenuItem.Name,
-				Ordering:     item.OrdersRestaurantMenuItem.Ordering,
-				GrossPrice:   item.OrdersRestaurantMenuItem.GrossPrice,
-				IsArchived:   item.OrdersRestaurantMenuItem.IsArchived,
-			}
+			menuItemsUUIDs = append(menuItemsUUIDs, item.MenuItemUUID.UUID)
 		}
 
-		quote, quote_items, err := updateFn(
-			ctx,
-			menuItemsMap,
-			shared.Currency(restaurant.Currency),
-			shared.Address(restaurant.Address),
-		)
+		appMenuItems, err := r.getMenuItems(ctx, queries, restaurantID, menuItemsUUIDs)
 		if err != nil {
 			return err
 		}
 
-		dbQuote, err := queries.AddQuote(ctx, dbmodels.AddQuoteParams{
-			QuoteUuid:          quote.QuoteUUID,
-			CustomerUuid:       quote.CustomerUUID,
-			RestaurantUuid:     quote.RestaurantUUID,
-			DeliveryAddress:    quote.DeliveryAddress,
-			ItemsSubtotalGross: quote.ItemsSubtotalGross,
-			Currency:           restaurant.Currency,
-			ServiceFeeGross:    quote.ServiceFeeGross,
-			DeliveryFeeGross:   quote.DeliveryFeeGross,
-			TotalAmountGross:   quote.TotalAmountGross,
-			TotalTax:           quote.TotalTax,
-			CreatedAt:          quote.CreatedAt,
+		restaurant, err := queries.GetRestaurant(ctx, restaurantID)
+		if err != nil {
+			return fmt.Errorf("failed to get restaurant currency for restaurant %s: %w", restaurantID, err)
+		}
+
+		var items []app.QuoteMenuItem
+		quote, items, err = updateFn(ctx, appMenuItems, restaurant.Currency, restaurant.Address)
+		if err != nil {
+			return fmt.Errorf("failed to create quote using updateFn: %w", err)
+		}
+
+		err = queries.AddQuote(ctx, dbmodels.AddQuoteParams{
+			quote.QuoteUUID,
+			quote.CustomerUUID,
+			quote.RestaurantUUID,
+			quote.DeliveryAddress,
+			quote.ItemsSubtotalGross,
+			quote.ServiceFeeGross,
+			quote.DeliveryFeeGross,
+			quote.TotalAmountGross,
+			quote.TotalTax,
+			time.Now(),
+			quote.Currency,
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to add quote %s: %w", quote.QuoteUUID, err)
 		}
 
-		finalQuote = app.Quote{
-			QuoteUUID:          dbQuote.QuoteUuid,
-			CustomerUUID:       dbQuote.CustomerUuid,
-			RestaurantUUID:     dbQuote.RestaurantUuid,
-			DeliveryAddress:    dbQuote.DeliveryAddress,
-			ItemsSubtotalGross: dbQuote.ItemsSubtotalGross,
-			ServiceFeeGross:    dbQuote.ServiceFeeGross,
-			DeliveryFeeGross:   dbQuote.DeliveryFeeGross,
-			TotalAmountGross:   dbQuote.TotalAmountGross,
-			TotalTax:           dbQuote.TotalTax,
-			Currency:           dbQuote.Currency,
-			CreatedAt:          dbQuote.CreatedAt,
-		}
+		quoteItems := dbQuoteItemsFromApp(items, quote)
 
-		var quoteItemsParams []dbmodels.AddQuoteItemsParams
-		for _, item := range quote_items {
-			quoteItemsParams = append(quoteItemsParams, dbmodels.AddQuoteItemsParams{
-				QuoteUuid:    quote.QuoteUUID,
-				MenuItemUuid: item.MenuItemUUID,
-				Quantity:     int32(item.Quantity),
-				GrossPrice:   item.GrossPrice,
-			})
-		}
-
-		quantity_items, err := queries.AddQuoteItems(ctx, quoteItemsParams)
-		if err != nil {
-			return err
-		}
-
-		if quantity_items != int64(len(quote_items)) {
-			return fmt.Errorf("quantity items added are not equal to items")
+		if _, err := queries.AddQuoteItems(ctx, quoteItems); err != nil {
+			return fmt.Errorf("failed to add quote items for quote %s: %w", quote.QuoteUUID, err)
 		}
 
 		return nil
 	})
+	if err != nil {
+		return app.Quote{}, err
+	}
 
-	return finalQuote, err
+	return quote, nil
+}
+
+func dbQuoteItemsFromApp(menuItems []app.QuoteMenuItem, quote app.Quote) []dbmodels.AddQuoteItemsParams {
+	quoteItems := make([]dbmodels.AddQuoteItemsParams, 0, len(menuItems))
+	for _, position := range menuItems {
+		quoteItems = append(quoteItems, dbmodels.AddQuoteItemsParams{
+			common.NewUUIDv7(),
+			quote.QuoteUUID,
+			position.MenuItemUUID,
+			position.GrossPrice,
+			int32(position.Quantity),
+		})
+	}
+	return quoteItems
+}
+
+func (r *OrdersRepo) getMenuItems(ctx context.Context, queries *dbmodels.Queries, restaurantUUID app.RestaurantUUID, menuItemsUUIDs []common.UUID) (map[app.RestaurantMenuItemUUID]app.MenuItem, error) {
+	dbMenuItems, err := queries.GetMenuItemsByUUIDs(ctx, dbmodels.GetMenuItemsByUUIDsParams{
+		RestaurantUuid: restaurantUUID,
+		Column2:        menuItemsUUIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get menu positions: %w", err)
+	}
+
+	return appMenuItemsFromDbMenuItems(dbMenuItems), nil
+}
+
+func appMenuItemsFromDbMenuItems(dbMenuItems []dbmodels.OrdersRestaurantMenuItem) map[app.RestaurantMenuItemUUID]app.MenuItem {
+	appMenuItems := make(map[app.RestaurantMenuItemUUID]app.MenuItem, len(dbMenuItems))
+
+	for _, dbItemPosition := range dbMenuItems {
+		appMenuItems[dbItemPosition.RestaurantMenuItemUuid] = app.MenuItem{
+			dbItemPosition.RestaurantMenuItemUuid,
+			dbItemPosition.Name,
+			dbItemPosition.Ordering,
+			dbItemPosition.GrossPrice,
+			dbItemPosition.IsArchived,
+		}
+	}
+
+	return appMenuItems
 }

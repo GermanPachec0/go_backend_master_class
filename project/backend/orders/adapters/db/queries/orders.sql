@@ -1,32 +1,5 @@
--- name: GetQuoteItems :many
-SELECT *
-FROM orders.quote_items
-WHERE quote_uuid = $1;
-
--- name: GetQuote :one
-SELECT
-	*
-FROM
-	orders.quotes AS quotes
-WHERE
-	quote_uuid = $1
-LIMIT 1;
-
-
--- name: AddQuoteItems :copyfrom
-
-INSERT INTO orders.quote_items (
-    quote_item_uuid,
-    quote_uuid,
-    menu_item_uuid,
-    gross_price,
-    quantity
-)
-VALUES
-	($1, $2, $3, $4, $5);
-
-
--- name: AddQuote :one
+-- Quotes are immutable - no update query exists. If needed, create a new quote.
+-- name: AddQuote :exec
 INSERT INTO orders.quotes (
 	quote_uuid,
 	customer_uuid,
@@ -42,5 +15,30 @@ INSERT INTO orders.quotes (
 )
 VALUES
 	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING *;
+;
 
+-- :copyfrom uses PostgreSQL COPY for bulk inserts. See: https://docs.sqlc.dev/en/stable/howto/insert.html#using-copyfrom
+-- name: AddQuoteItems :copyfrom
+INSERT INTO orders.quote_items (
+	quote_item_uuid,
+	quote_uuid,
+	menu_item_uuid,
+	gross_price,
+	quantity
+)
+VALUES
+	($1, $2, $3, $4, $5);
+
+-- name: GetQuoteItems :many
+SELECT *
+FROM orders.quote_items
+WHERE quote_uuid = $1;
+
+-- name: GetQuote :one
+SELECT
+	*
+FROM
+	orders.quotes AS quotes
+WHERE
+	quote_uuid = $1
+LIMIT 1;
