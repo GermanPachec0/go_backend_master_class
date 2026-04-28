@@ -39,6 +39,43 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /orders/customer/create-quote:
+    post:
+      summary: Create order quote
+      operationId: customerCreateQuote
+      tags:
+        - customer
+      parameters:
+        - name: Customer-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/CustomerUUID'
+          description: Customer UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQuoteRequest'
+      responses:
+        '201':
+          description: Order initialized successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateQuoteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+
   /orders/restaurant/onboard/{restaurant_uuid}:
     put:
       summary: Onboard or replace a restaurant with full details
@@ -109,6 +146,67 @@ components:
         customer_uuid:
           $ref: '#/components/schemas/CustomerUUID'
 
+    CreateQuoteRequest:
+      type: object
+      required:
+        - restaurant_uuid
+        - items
+        - delivery_address
+      properties:
+        restaurant_uuid:
+          $ref: '#/components/schemas/RestaurantUUID'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+          minItems: 1
+        delivery_address:
+          $ref: '#/components/schemas/Address'
+
+    CreateQuoteResponse:
+      type: object
+      required:
+        - quote_uuid
+        - items_subtotal_gross
+        - service_fee_gross
+        - delivery_fee_gross
+        - total_gross
+        - total_tax
+        - expires_at
+        - currency
+      properties:
+        quote_uuid:
+          $ref: '#/components/schemas/QuoteUUID'
+        items_subtotal_gross:
+          $ref: '#/components/schemas/Decimal'
+        service_fee_gross:
+          $ref: '#/components/schemas/Decimal'
+        delivery_fee_gross:
+          $ref: '#/components/schemas/Decimal'
+        total_gross:
+          $ref: '#/components/schemas/Decimal'
+        total_tax:
+          $ref: '#/components/schemas/Decimal'
+        expires_at:
+          type: string
+          format: date-time
+          description: When the offer expires
+        currency:
+          $ref: '#/components/schemas/Currency'
+
+    OrderItem:
+      type: object
+      required:
+        - menu_item_uuid
+        - quantity
+      properties:
+        menu_item_uuid:
+          $ref: '#/components/schemas/MenuItemUUID'
+        quantity:
+          type: integer
+          minimum: 1
+          description: Quantity of the item
+
     MenuItem:
       type: object
       required:
@@ -152,6 +250,14 @@ components:
           items:
             $ref: '#/components/schemas/MenuItem'
           description: Menu items for the restaurant
+
+    QuoteUUID:
+      type: string
+      format: uuid
+      description: UUID of an quote
+      x-go-type: app.QuoteUUID
+      x-go-type-import:
+        path: eats/backend/orders/app
 
     CustomerUUID:
       type: string
