@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"eats/backend/common"
 	"eats/backend/common/shared"
@@ -42,6 +43,32 @@ type Address struct {
 
 // CountryCode Country code in ISO 3166-1 alpha-2 format
 type CountryCode = shared.CountryCode
+
+// CreateQuoteRequest defines model for CreateQuoteRequest.
+type CreateQuoteRequest struct {
+	DeliveryAddress Address     `json:"delivery_address"`
+	Items           []OrderItem `json:"items"`
+
+	// RestaurantUuid UUID of a restaurant
+	RestaurantUuid RestaurantUUID `json:"restaurant_uuid"`
+}
+
+// CreateQuoteResponse defines model for CreateQuoteResponse.
+type CreateQuoteResponse struct {
+	// Currency Currency code in ISO 4217 format
+	Currency         Currency `json:"currency"`
+	DeliveryFeeGross Decimal  `json:"delivery_fee_gross"`
+
+	// ExpiresAt When the offer expires
+	ExpiresAt          time.Time `json:"expires_at"`
+	ItemsSubtotalGross Decimal   `json:"items_subtotal_gross"`
+
+	// QuoteUuid UUID of an quote
+	QuoteUuid       QuoteUUID `json:"quote_uuid"`
+	ServiceFeeGross Decimal   `json:"service_fee_gross"`
+	TotalGross      Decimal   `json:"total_gross"`
+	TotalTax        Decimal   `json:"total_tax"`
+}
 
 // Currency Currency code in ISO 4217 format
 type Currency = shared.Currency
@@ -109,6 +136,18 @@ type OnboardRestaurant struct {
 // OperatorUUID UUID of an operator
 type OperatorUUID = common.UUID
 
+// OrderItem defines model for OrderItem.
+type OrderItem struct {
+	// MenuItemUuid UUID of a menu item
+	MenuItemUuid MenuItemUUID `json:"menu_item_uuid"`
+
+	// Quantity Quantity of the item
+	Quantity int `json:"quantity"`
+}
+
+// QuoteUUID UUID of an quote
+type QuoteUUID = app.QuoteUUID
+
 // RegisterCustomer defines model for RegisterCustomer.
 type RegisterCustomer struct {
 	Address Address `json:"address"`
@@ -138,13 +177,28 @@ type BadRequest = ErrorResponse
 // Forbidden defines model for Forbidden.
 type Forbidden = ErrorResponse
 
+// Gone defines model for Gone.
+type Gone = ErrorResponse
+
+// NotFound defines model for NotFound.
+type NotFound = ErrorResponse
+
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = ErrorResponse
+
+// CustomerCreateQuoteParams defines parameters for CustomerCreateQuote.
+type CustomerCreateQuoteParams struct {
+	// CustomerUUID Customer UUID
+	CustomerUUID CustomerUUID `json:"Customer-UUID"`
+}
 
 // OnboardRestaurantParams defines parameters for OnboardRestaurant.
 type OnboardRestaurantParams struct {
 	OperatorUUID OperatorUUID `json:"Operator-UUID"`
 }
+
+// CustomerCreateQuoteJSONRequestBody defines body for CustomerCreateQuote for application/json ContentType.
+type CustomerCreateQuoteJSONRequestBody = CreateQuoteRequest
 
 // RegisterCustomerJSONRequestBody defines body for RegisterCustomer for application/json ContentType.
 type RegisterCustomerJSONRequestBody = RegisterCustomer
@@ -225,6 +279,11 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+	// CustomerCreateQuoteWithBody request with any body
+	CustomerCreateQuoteWithBody(ctx context.Context, params *CustomerCreateQuoteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CustomerCreateQuote(ctx context.Context, params *CustomerCreateQuoteParams, body CustomerCreateQuoteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RegisterCustomerWithBody request with any body
 	RegisterCustomerWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -234,6 +293,30 @@ type ClientInterface interface {
 	OnboardRestaurantWithBody(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	OnboardRestaurant(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, body OnboardRestaurantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+func (c *Client) CustomerCreateQuoteWithBody(ctx context.Context, params *CustomerCreateQuoteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCustomerCreateQuoteRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CustomerCreateQuote(ctx context.Context, params *CustomerCreateQuoteParams, body CustomerCreateQuoteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCustomerCreateQuoteRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 func (c *Client) RegisterCustomerWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -282,6 +365,59 @@ func (c *Client) OnboardRestaurant(ctx context.Context, restaurantUuid Restauran
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewCustomerCreateQuoteRequest calls the generic CustomerCreateQuote builder with application/json body
+func NewCustomerCreateQuoteRequest(server string, params *CustomerCreateQuoteParams, body CustomerCreateQuoteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCustomerCreateQuoteRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewCustomerCreateQuoteRequestWithBody generates requests for CustomerCreateQuote with any type of body
+func NewCustomerCreateQuoteRequestWithBody(server string, params *CustomerCreateQuoteParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/orders/customer/create-quote")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithLocation("simple", false, "Customer-UUID", runtime.ParamLocationHeader, params.CustomerUUID)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Customer-UUID", headerParam0)
+
+	}
+
+	return req, nil
 }
 
 // NewRegisterCustomerRequest calls the generic RegisterCustomer builder with application/json body
@@ -427,6 +563,11 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
+	// CustomerCreateQuoteWithBodyWithResponse request with any body
+	CustomerCreateQuoteWithBodyWithResponse(ctx context.Context, params *CustomerCreateQuoteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CustomerCreateQuoteClientResponse, error)
+
+	CustomerCreateQuoteWithResponse(ctx context.Context, params *CustomerCreateQuoteParams, body CustomerCreateQuoteJSONRequestBody, reqEditors ...RequestEditorFn) (*CustomerCreateQuoteClientResponse, error)
+
 	// RegisterCustomerWithBodyWithResponse request with any body
 	RegisterCustomerWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterCustomerClientResponse, error)
 
@@ -436,6 +577,33 @@ type ClientWithResponsesInterface interface {
 	OnboardRestaurantWithBodyWithResponse(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*OnboardRestaurantClientResponse, error)
 
 	OnboardRestaurantWithResponse(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, body OnboardRestaurantJSONRequestBody, reqEditors ...RequestEditorFn) (*OnboardRestaurantClientResponse, error)
+}
+
+type CustomerCreateQuoteClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *CreateQuoteResponse
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+	JSON410      *Gone
+}
+
+// Status returns HTTPResponse.Status
+func (r CustomerCreateQuoteClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CustomerCreateQuoteClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
 }
 
 type RegisterCustomerClientResponse struct {
@@ -486,6 +654,23 @@ func (r OnboardRestaurantClientResponse) StatusCode() int {
 	return 0
 }
 
+// CustomerCreateQuoteWithBodyWithResponse request with arbitrary body returning *CustomerCreateQuoteClientResponse
+func (c *ClientWithResponses) CustomerCreateQuoteWithBodyWithResponse(ctx context.Context, params *CustomerCreateQuoteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CustomerCreateQuoteClientResponse, error) {
+	rsp, err := c.CustomerCreateQuoteWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCustomerCreateQuoteClientResponse(rsp)
+}
+
+func (c *ClientWithResponses) CustomerCreateQuoteWithResponse(ctx context.Context, params *CustomerCreateQuoteParams, body CustomerCreateQuoteJSONRequestBody, reqEditors ...RequestEditorFn) (*CustomerCreateQuoteClientResponse, error) {
+	rsp, err := c.CustomerCreateQuote(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCustomerCreateQuoteClientResponse(rsp)
+}
+
 // RegisterCustomerWithBodyWithResponse request with arbitrary body returning *RegisterCustomerClientResponse
 func (c *ClientWithResponses) RegisterCustomerWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterCustomerClientResponse, error) {
 	rsp, err := c.RegisterCustomerWithBody(ctx, contentType, body, reqEditors...)
@@ -518,6 +703,67 @@ func (c *ClientWithResponses) OnboardRestaurantWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseOnboardRestaurantClientResponse(rsp)
+}
+
+// ParseCustomerCreateQuoteClientResponse parses an HTTP response from a CustomerCreateQuoteWithResponse call
+func ParseCustomerCreateQuoteClientResponse(rsp *http.Response) (*CustomerCreateQuoteClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CustomerCreateQuoteClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest CreateQuoteResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Gone
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON410 = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseRegisterCustomerClientResponse parses an HTTP response from a RegisterCustomerWithResponse call

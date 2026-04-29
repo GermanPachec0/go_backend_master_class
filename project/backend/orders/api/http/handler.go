@@ -103,6 +103,35 @@ func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestauran
 	return OnboardRestaurant204Response{}, nil
 }
 
+func (h Handler) CustomerCreateQuote(ctx context.Context, request CustomerCreateQuoteRequestObject) (CustomerCreateQuoteResponseObject, error) {
+	var quoteItems []app.CreateQuoteItem
+	for _, items := range request.Body.Items {
+		quoteItems = append(quoteItems, app.CreateQuoteItem{
+			MenuItemUUID: items.MenuItemUuid,
+			Quantity:     items.Quantity,
+		})
+	}
+
+	address, err := openapiAddressToSharedAddress(request.Body.DeliveryAddress)
+	if err != nil {
+		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
+	}
+
+	quote, err := h.service.CreateQuote(ctx, app.CreateQuote{
+		RestaurantUUID:  request.Body.RestaurantUuid,
+		CustomerUUID:    request.Params.CustomerUUID,
+		DeliveryAddress: address,
+		QuoteItems:      quoteItems,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return CustomerCreateQuote201JSONResponse{
+		QuoteUuid: quote.QuoteUUID,
+	}, nil
+}
+
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {
 	RegisterHandlers(e, NewStrictHandler(handler, nil))
 
