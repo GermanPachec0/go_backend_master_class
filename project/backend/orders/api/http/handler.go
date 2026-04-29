@@ -8,19 +8,31 @@ import (
 	"eats/backend/orders/app"
 )
 
+// ReadModel is an interface for the read model that lists menu items.
+// It is defined here (consumer side) to allow for easy testing and decoupling.
+type ReadModel interface {
+	ListMenuItemsWithRestaurant(ctx context.Context) ([]MenuItemWithRestaurant, error)
+}
+
 type Handler struct {
-	service *app.Service
+	service   *app.Service
+	readModel ReadModel
 }
 
 func NewHandler(
 	service *app.Service,
+	readModel ReadModel,
 ) Handler {
 	if service == nil {
 		panic("service cannot be nil")
 	}
+	if readModel == nil {
+		panic("readModel cannot be nil")
+	}
 
 	return Handler{
-		service: service,
+		service:   service,
+		readModel: readModel,
 	}
 }
 
@@ -65,6 +77,46 @@ func openapiAddressToSharedAddress(addr Address) (shared.Address, error) {
 	return sharedAddr, nil
 }
 
+func (h Handler) CustomerCreateQuote(ctx context.Context, request CustomerCreateQuoteRequestObject) (CustomerCreateQuoteResponseObject, error) {
+	if request.Params.CustomerUUID.IsZero() {
+		return nil, common.NewUnauthorizedError("missing-customer-uuid", "customer UUID is required")
+	}
+
+	var items []app.CreateQuoteItem
+	for _, item := range request.Body.Items {
+		items = append(items, app.CreateQuoteItem{
+			MenuItemUUID: item.MenuItemUuid,
+			Quantity:     item.Quantity,
+		})
+	}
+
+	addr, err := openapiAddressToSharedAddress(request.Body.DeliveryAddress)
+	if err != nil {
+		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
+	}
+
+	quote, err := h.service.CreateQuote(ctx, app.CreateQuote{
+		request.Params.CustomerUUID,
+		request.Body.RestaurantUuid,
+		items,
+		addr,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return CustomerCreateQuote201JSONResponse{
+		quote.Currency,
+		quote.DeliveryFeeGross,
+		quote.ExpirationTime(),
+		quote.ItemsSubtotalGross,
+		quote.QuoteUUID,
+		quote.ServiceFeeGross,
+		quote.TotalAmountGross,
+		quote.TotalTax,
+	}, nil
+}
+
 func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestaurantRequestObject) (OnboardRestaurantResponseObject, error) {
 	if request.Params.OperatorUUID.IsZero() {
 		return nil, common.NewUnauthorizedError("missing-operator-uuid", "operator UUID is required")
@@ -103,40 +155,14 @@ func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestauran
 	return OnboardRestaurant204Response{}, nil
 }
 
-func (h Handler) CustomerCreateQuote(ctx context.Context, request CustomerCreateQuoteRequestObject) (CustomerCreateQuoteResponseObject, error) {
-	var quoteItems []app.CreateQuoteItem
-	for _, items := range request.Body.Items {
-		quoteItems = append(quoteItems, app.CreateQuoteItem{
-			MenuItemUUID: items.MenuItemUuid,
-			Quantity:     items.Quantity,
-		})
-	}
-
-	address, err := openapiAddressToSharedAddress(request.Body.DeliveryAddress)
-	if err != nil {
-		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
-	}
-
-	quote, err := h.service.CreateQuote(ctx, app.CreateQuote{
-		RestaurantUUID:  request.Body.RestaurantUuid,
-		CustomerUUID:    request.Params.CustomerUUID,
-		DeliveryAddress: address,
-		QuoteItems:      quoteItems,
-	})
+// ListMenuItems returns all active menu items with their restaurant information.
+func (h Handler) ListMenuItems(ctx context.Context, _ ListMenuItemsRequestObject) (ListMenuItemsResponseObject, error) {
+	items, err := h.readModel.ListMenuItemsWithRestaurant(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return CustomerCreateQuote201JSONResponse{
-		QuoteUuid:          quote.QuoteUUID,
-		Currency:           quote.Currency,
-		DeliveryFeeGross:   quote.DeliveryFeeGross,
-		ExpiresAt:          quote.ExpirationTime(),
-		ItemsSubtotalGross: quote.ItemsSubtotalGross,
-		ServiceFeeGross:    quote.ServiceFeeGross,
-		TotalGross:         quote.TotalAmountGross,
-		TotalTax:           quote.TotalTax,
-	}, nil
+	return ListMenuItems200JSONResponse(items), nil
 }
 
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {

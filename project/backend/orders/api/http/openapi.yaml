@@ -76,6 +76,25 @@ paths:
         '410':
           $ref: '#/components/responses/Gone'
 
+  /orders/restaurants/menu-items:
+    get:
+      summary: List all menu items with restaurant info
+      operationId: listMenuItems
+      description: |
+        Returns a list of all active menu items joined with their restaurant information.
+        This is a read model endpoint - it returns denormalized data optimized for display.
+      tags:
+        - read-model
+      responses:
+        '200':
+          description: List of menu items with restaurant info
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MenuItemWithRestaurant'
+
   /orders/restaurant/onboard/{restaurant_uuid}:
     put:
       summary: Onboard or replace a restaurant with full details
@@ -225,6 +244,31 @@ components:
         ordering:
           type: number
           description: Ordering index for display
+
+    MenuItemWithRestaurant:
+      type: object
+      required:
+        - menu_item_uuid
+        - menu_item_name
+        - gross_price
+        - currency
+        - restaurant_uuid
+        - restaurant_name
+      properties:
+        menu_item_uuid:
+          $ref: '#/components/schemas/MenuItemUUID'
+        menu_item_name:
+          type: string
+          description: Name of the menu item
+        gross_price:
+          $ref: '#/components/schemas/Decimal'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        restaurant_uuid:
+          $ref: '#/components/schemas/RestaurantUUID'
+        restaurant_name:
+          type: string
+          description: Name of the restaurant
 
     OnboardRestaurant:
       type: object

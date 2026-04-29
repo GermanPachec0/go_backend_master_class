@@ -40,11 +40,13 @@ func (m *Module) Init(ctx context.Context) error {
 	restaurantRepo := db.NewRestaurantRepository(m.pgxDb)
 	ordersRepo := db.NewOrdersRepository(m.pgxDb)
 	customerRepo := db.NewCustomerRepository(m.pgxDb)
+	readModel := db.NewReadModel(m.pgxDb)
 
 	appService := app.NewService(restaurantRepo, customerRepo, ordersRepo, m.modules)
 
 	httpHandler := http2.NewHandler(
 		appService,
+		readModel,
 	)
 	m.httpHandler = httpHandler
 
