@@ -128,7 +128,14 @@ func (h Handler) CustomerCreateQuote(ctx context.Context, request CustomerCreate
 	}
 
 	return CustomerCreateQuote201JSONResponse{
-		QuoteUuid: quote.QuoteUUID,
+		QuoteUuid:          quote.QuoteUUID,
+		Currency:           quote.Currency,
+		DeliveryFeeGross:   quote.DeliveryFeeGross,
+		ExpiresAt:          quote.ExpirationTime(),
+		ItemsSubtotalGross: quote.ItemsSubtotalGross,
+		ServiceFeeGross:    quote.ServiceFeeGross,
+		TotalGross:         quote.TotalAmountGross,
+		TotalTax:           quote.TotalTax,
 	}, nil
 }
 
