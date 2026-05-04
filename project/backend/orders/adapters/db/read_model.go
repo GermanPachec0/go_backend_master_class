@@ -2,10 +2,10 @@ package db
 
 import (
 	"context"
-	"errors"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"eats/backend/orders/adapters/db/dbmodels"
 	"eats/backend/orders/api/http"
 )
 
@@ -23,5 +23,23 @@ func NewReadModel(db *pgxpool.Pool) *ReadModel {
 
 // TODO: Implement this method using sqlc to query menu items joined with restaurants.
 func (r ReadModel) ListMenuItemsWithRestaurant(ctx context.Context) ([]http.MenuItemWithRestaurant, error) {
-	return nil, errors.New("not implemented")
+	queries := dbmodels.New(r.db)
+
+	result, err := queries.ListMenuItemsWithRestaurant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var menuItemsWithRestaurant []http.MenuItemWithRestaurant
+	for _, item := range result {
+		menuItemsWithRestaurant = append(menuItemsWithRestaurant, http.MenuItemWithRestaurant{
+			MenuItemUuid:   item.OrdersRestaurantMenuItem.RestaurantMenuItemUuid,
+			MenuItemName:   item.OrdersRestaurantMenuItem.Name,
+			GrossPrice:     item.OrdersRestaurantMenuItem.GrossPrice,
+			RestaurantUuid: item.OrdersRestaurant.RestaurantUuid,
+			RestaurantName: item.OrdersRestaurant.Name,
+			Currency:       item.OrdersRestaurant.Currency,
+		})
+	}
+
+	return menuItemsWithRestaurant, nil
 }

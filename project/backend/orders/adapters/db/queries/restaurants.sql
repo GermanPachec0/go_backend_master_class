@@ -66,3 +66,16 @@ SET
 WHERE
 	restaurant_menu_item_uuid = ANY ($1::UUID[])
 ;
+
+-- name: ListMenuItemsWithRestaurant :many
+SELECT
+	sqlc.embed(restaurant_menu_items),
+	sqlc.embed(restaurants)
+FROM
+	orders.restaurant_menu_items AS restaurant_menu_items
+JOIN
+	orders.restaurants AS restaurants ON restaurant_menu_items.restaurant_uuid = restaurants.restaurant_uuid
+WHERE
+	restaurant_menu_items.is_archived = FALSE
+ORDER BY
+	restaurants.name, restaurant_menu_items.ordering ASC;

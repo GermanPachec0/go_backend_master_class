@@ -135,6 +135,57 @@ func (q *Queries) GetRestaurantMenu(ctx context.Context, restaurantUuid app.Rest
 	return items, nil
 }
 
+const listMenuItemsWithRestaurant = `-- name: ListMenuItemsWithRestaurant :many
+SELECT
+	restaurant_menu_items.restaurant_menu_item_uuid, restaurant_menu_items.restaurant_uuid, restaurant_menu_items.name, restaurant_menu_items.gross_price, restaurant_menu_items.ordering, restaurant_menu_items.is_archived,
+	restaurants.restaurant_uuid, restaurants.name, restaurants.description, restaurants.address, restaurants.currency
+FROM
+	orders.restaurant_menu_items AS restaurant_menu_items
+JOIN
+	orders.restaurants AS restaurants ON restaurant_menu_items.restaurant_uuid = restaurants.restaurant_uuid
+WHERE
+	restaurant_menu_items.is_archived = FALSE
+ORDER BY
+	restaurants.name, restaurant_menu_items.ordering ASC
+`
+
+type ListMenuItemsWithRestaurantRow struct {
+	OrdersRestaurantMenuItem OrdersRestaurantMenuItem
+	OrdersRestaurant         OrdersRestaurant
+}
+
+func (q *Queries) ListMenuItemsWithRestaurant(ctx context.Context) ([]ListMenuItemsWithRestaurantRow, error) {
+	rows, err := q.db.Query(ctx, listMenuItemsWithRestaurant)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMenuItemsWithRestaurantRow{}
+	for rows.Next() {
+		var i ListMenuItemsWithRestaurantRow
+		if err := rows.Scan(
+			&i.OrdersRestaurantMenuItem.RestaurantMenuItemUuid,
+			&i.OrdersRestaurantMenuItem.RestaurantUuid,
+			&i.OrdersRestaurantMenuItem.Name,
+			&i.OrdersRestaurantMenuItem.GrossPrice,
+			&i.OrdersRestaurantMenuItem.Ordering,
+			&i.OrdersRestaurantMenuItem.IsArchived,
+			&i.OrdersRestaurant.RestaurantUuid,
+			&i.OrdersRestaurant.Name,
+			&i.OrdersRestaurant.Description,
+			&i.OrdersRestaurant.Address,
+			&i.OrdersRestaurant.Currency,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertRestaurant = `-- name: UpsertRestaurant :one
 INSERT INTO orders.restaurants (restaurant_uuid, name, description, address, currency)
 VALUES

@@ -114,6 +114,25 @@ type MenuItem struct {
 // MenuItemUUID UUID of a menu item
 type MenuItemUUID = app.RestaurantMenuItemUUID
 
+// MenuItemWithRestaurant defines model for MenuItemWithRestaurant.
+type MenuItemWithRestaurant struct {
+	// Currency Currency code in ISO 4217 format
+	Currency   Currency `json:"currency"`
+	GrossPrice Decimal  `json:"gross_price"`
+
+	// MenuItemName Name of the menu item
+	MenuItemName string `json:"menu_item_name"`
+
+	// MenuItemUuid UUID of a menu item
+	MenuItemUuid MenuItemUUID `json:"menu_item_uuid"`
+
+	// RestaurantName Name of the restaurant
+	RestaurantName string `json:"restaurant_name"`
+
+	// RestaurantUuid UUID of a restaurant
+	RestaurantUuid RestaurantUUID `json:"restaurant_uuid"`
+}
+
 // OnboardRestaurant defines model for OnboardRestaurant.
 type OnboardRestaurant struct {
 	Address Address `json:"address"`
@@ -215,6 +234,9 @@ type ServerInterface interface {
 	// Onboard or replace a restaurant with full details
 	// (PUT /orders/restaurant/onboard/{restaurant_uuid})
 	OnboardRestaurant(ctx echo.Context, restaurantUuid RestaurantUUID, params OnboardRestaurantParams) error
+	// List all menu items with restaurant info
+	// (GET /orders/restaurants/menu-items)
+	ListMenuItems(ctx echo.Context) error
 }
 
 // ServerInterfaceWrapper converts echo contexts to parameters.
@@ -300,6 +322,15 @@ func (w *ServerInterfaceWrapper) OnboardRestaurant(ctx echo.Context) error {
 	return err
 }
 
+// ListMenuItems converts echo context to params.
+func (w *ServerInterfaceWrapper) ListMenuItems(ctx echo.Context) error {
+	var err error
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.ListMenuItems(ctx)
+	return err
+}
+
 // This is a simple interface which specifies echo.Route addition functions which
 // are present on both echo.Echo and echo.Group, since we want to allow using
 // either of them for path registration
@@ -331,6 +362,7 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 	router.POST(baseURL+"/orders/customer/create-quote", wrapper.CustomerCreateQuote)
 	router.POST(baseURL+"/orders/register-customer", wrapper.RegisterCustomer)
 	router.PUT(baseURL+"/orders/restaurant/onboard/:restaurant_uuid", wrapper.OnboardRestaurant)
+	router.GET(baseURL+"/orders/restaurants/menu-items", wrapper.ListMenuItems)
 
 }
 
@@ -487,6 +519,22 @@ func (response OnboardRestaurant403JSONResponse) VisitOnboardRestaurantResponse(
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ListMenuItemsRequestObject struct {
+}
+
+type ListMenuItemsResponseObject interface {
+	VisitListMenuItemsResponse(w http.ResponseWriter) error
+}
+
+type ListMenuItems200JSONResponse []MenuItemWithRestaurant
+
+func (response ListMenuItems200JSONResponse) VisitListMenuItemsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// Create order quote
@@ -498,6 +546,9 @@ type StrictServerInterface interface {
 	// Onboard or replace a restaurant with full details
 	// (PUT /orders/restaurant/onboard/{restaurant_uuid})
 	OnboardRestaurant(ctx context.Context, request OnboardRestaurantRequestObject) (OnboardRestaurantResponseObject, error)
+	// List all menu items with restaurant info
+	// (GET /orders/restaurants/menu-items)
+	ListMenuItems(ctx context.Context, request ListMenuItemsRequestObject) (ListMenuItemsResponseObject, error)
 }
 
 type StrictHandlerFunc = strictecho.StrictEchoHandlerFunc
@@ -598,6 +649,29 @@ func (sh *strictHandler) OnboardRestaurant(ctx echo.Context, restaurantUuid Rest
 		return err
 	} else if validResponse, ok := response.(OnboardRestaurantResponseObject); ok {
 		return validResponse.VisitOnboardRestaurantResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// ListMenuItems operation middleware
+func (sh *strictHandler) ListMenuItems(ctx echo.Context) error {
+	var request ListMenuItemsRequestObject
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.ListMenuItems(ctx.Request().Context(), request.(ListMenuItemsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListMenuItems")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(ListMenuItemsResponseObject); ok {
+		return validResponse.VisitListMenuItemsResponse(ctx.Response())
 	} else if response != nil {
 		return fmt.Errorf("unexpected response type: %T", response)
 	}

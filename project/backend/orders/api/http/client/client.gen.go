@@ -116,6 +116,25 @@ type MenuItem struct {
 // MenuItemUUID UUID of a menu item
 type MenuItemUUID = app.RestaurantMenuItemUUID
 
+// MenuItemWithRestaurant defines model for MenuItemWithRestaurant.
+type MenuItemWithRestaurant struct {
+	// Currency Currency code in ISO 4217 format
+	Currency   Currency `json:"currency"`
+	GrossPrice Decimal  `json:"gross_price"`
+
+	// MenuItemName Name of the menu item
+	MenuItemName string `json:"menu_item_name"`
+
+	// MenuItemUuid UUID of a menu item
+	MenuItemUuid MenuItemUUID `json:"menu_item_uuid"`
+
+	// RestaurantName Name of the restaurant
+	RestaurantName string `json:"restaurant_name"`
+
+	// RestaurantUuid UUID of a restaurant
+	RestaurantUuid RestaurantUUID `json:"restaurant_uuid"`
+}
+
 // OnboardRestaurant defines model for OnboardRestaurant.
 type OnboardRestaurant struct {
 	Address Address `json:"address"`
@@ -293,6 +312,9 @@ type ClientInterface interface {
 	OnboardRestaurantWithBody(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	OnboardRestaurant(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, body OnboardRestaurantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMenuItems request
+	ListMenuItems(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) CustomerCreateQuoteWithBody(ctx context.Context, params *CustomerCreateQuoteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -357,6 +379,18 @@ func (c *Client) OnboardRestaurantWithBody(ctx context.Context, restaurantUuid R
 
 func (c *Client) OnboardRestaurant(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, body OnboardRestaurantJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewOnboardRestaurantRequest(c.Server, restaurantUuid, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMenuItems(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMenuItemsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -520,6 +554,33 @@ func NewOnboardRestaurantRequestWithBody(server string, restaurantUuid Restauran
 	return req, nil
 }
 
+// NewListMenuItemsRequest generates requests for ListMenuItems
+func NewListMenuItemsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/orders/restaurants/menu-items")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -577,6 +638,9 @@ type ClientWithResponsesInterface interface {
 	OnboardRestaurantWithBodyWithResponse(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*OnboardRestaurantClientResponse, error)
 
 	OnboardRestaurantWithResponse(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, body OnboardRestaurantJSONRequestBody, reqEditors ...RequestEditorFn) (*OnboardRestaurantClientResponse, error)
+
+	// ListMenuItemsWithResponse request
+	ListMenuItemsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListMenuItemsClientResponse, error)
 }
 
 type CustomerCreateQuoteClientResponse struct {
@@ -654,6 +718,28 @@ func (r OnboardRestaurantClientResponse) StatusCode() int {
 	return 0
 }
 
+type ListMenuItemsClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]MenuItemWithRestaurant
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMenuItemsClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMenuItemsClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // CustomerCreateQuoteWithBodyWithResponse request with arbitrary body returning *CustomerCreateQuoteClientResponse
 func (c *ClientWithResponses) CustomerCreateQuoteWithBodyWithResponse(ctx context.Context, params *CustomerCreateQuoteParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CustomerCreateQuoteClientResponse, error) {
 	rsp, err := c.CustomerCreateQuoteWithBody(ctx, params, contentType, body, reqEditors...)
@@ -703,6 +789,15 @@ func (c *ClientWithResponses) OnboardRestaurantWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseOnboardRestaurantClientResponse(rsp)
+}
+
+// ListMenuItemsWithResponse request returning *ListMenuItemsClientResponse
+func (c *ClientWithResponses) ListMenuItemsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListMenuItemsClientResponse, error) {
+	rsp, err := c.ListMenuItems(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMenuItemsClientResponse(rsp)
 }
 
 // ParseCustomerCreateQuoteClientResponse parses an HTTP response from a CustomerCreateQuoteWithResponse call
@@ -840,6 +935,32 @@ func ParseOnboardRestaurantClientResponse(rsp *http.Response) (*OnboardRestauran
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListMenuItemsClientResponse parses an HTTP response from a ListMenuItemsWithResponse call
+func ParseListMenuItemsClientResponse(rsp *http.Response) (*ListMenuItemsClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMenuItemsClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []MenuItemWithRestaurant
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	}
 
