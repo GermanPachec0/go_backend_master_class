@@ -4,6 +4,7 @@ package tests_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -112,4 +113,73 @@ func TestComponent_ListMenuItems_WithOrdering(t *testing.T) {
 				"items should be ordered by price ascending")
 		}
 	}
+}
+
+func TestComponent_ListMenuItems_WithFullTextSearch(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+	country := testutils.GenerateRandomCountry()
+
+	// Onboard restaurants with specific menu items for search testing
+	_, _ = onboardRestaurantWithItems(ctx, t, clients, country, "Italian Trattoria", []string{
+		"Spaghetti Carbonara",
+		"Margherita Pizza",
+		"Tiramisu Dessert",
+	})
+	_, _ = onboardRestaurantWithItems(ctx, t, clients, country, "Burger Joint", []string{
+		"Classic Cheeseburger",
+		"Bacon Burger",
+		"Veggie Burger",
+	})
+
+	// Search for "pizza" - should find items/restaurants mentioning pizza
+	search := "pizza"
+	resp, err := clients.Orders.ListMenuItemsWithResponse(ctx, &client.ListMenuItemsParams{
+		Search: &search,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode())
+	require.NotNil(t, resp.JSON200)
+
+	items := *resp.JSON200
+	require.NotEmpty(t, items, "should find items matching 'pizza'")
+
+	// All results should contain pizza in either item name or restaurant name
+	for _, item := range items {
+		found := strings.Contains(strings.ToLower(item.MenuItemName), "pizza") ||
+			strings.Contains(strings.ToLower(item.RestaurantName), "pizza")
+		assert.True(t, found, "item should match search term: %s at %s", item.MenuItemName, item.RestaurantName)
+	}
+}
+
+func TestComponent_ListMenuItems_WithSearchAndRelevanceOrdering(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+	country := testutils.GenerateRandomCountry()
+
+	// Create restaurants where one has "burger" in its name
+	_, _ = onboardRestaurantWithItems(ctx, t, clients, country, "Best Burger Place", []string{
+		"Simple Salad", // doesn't contain burger
+	})
+	_, _ = onboardRestaurantWithItems(ctx, t, clients, country, "Random Diner", []string{
+		"Deluxe Burger", // contains burger in item name
+	})
+
+	// Search for "burger" with relevance ordering
+	search := "burger"
+	orderBy := client.Relevance
+	resp, err := clients.Orders.ListMenuItemsWithResponse(ctx, &client.ListMenuItemsParams{
+		Search:  &search,
+		OrderBy: &orderBy,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode())
+	require.NotNil(t, resp.JSON200)
+
+	items := *resp.JSON200
+	require.NotEmpty(t, items, "should find items matching 'burger'")
 }
