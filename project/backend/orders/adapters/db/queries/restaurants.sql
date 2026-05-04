@@ -77,5 +77,14 @@ JOIN
 	orders.restaurants AS restaurants ON restaurant_menu_items.restaurant_uuid = restaurants.restaurant_uuid
 WHERE
 	restaurant_menu_items.is_archived = FALSE
+	AND (sqlc.narg(restaurant_name)::text IS NULL OR LOWER(restaurants.name) LIKE LOWER('%' || sqlc.narg(restaurant_name) || '%'))
 ORDER BY
-	restaurants.name, restaurant_menu_items.ordering ASC;
+    CASE WHEN sqlc.narg(order_by)::text = 'price_asc' THEN restaurant_menu_items.gross_price END ASC,
+    CASE WHEN sqlc.narg(order_by)::text = 'price_desc' THEN restaurant_menu_items.gross_price END DESC,
+    CASE WHEN sqlc.narg(order_by)::text = 'name_asc' THEN restaurants.name END ASC,
+    CASE WHEN sqlc.narg(order_by)::text = 'name_desc' THEN restaurants.name END DESC,
+	CASE WHEN (sqlc.narg(order_by)::text IS NULL OR sqlc.narg(order_by)::text = 'default')
+         THEN restaurants.name END ASC,
+    CASE WHEN (sqlc.narg(order_by)::text IS NULL OR sqlc.narg(order_by)::text = 'default')
+         THEN restaurant_menu_items.ordering END ASC
+	;

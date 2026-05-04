@@ -22,10 +22,15 @@ func NewReadModel(db *pgxpool.Pool) *ReadModel {
 }
 
 // TODO: Implement this method using sqlc to query menu items joined with restaurants.
-func (r ReadModel) ListMenuItemsWithRestaurant(ctx context.Context) ([]http.MenuItemWithRestaurant, error) {
+func (r ReadModel) ListMenuItemsWithRestaurant(ctx context.Context, params http.ListMenuItemsFilter) ([]http.MenuItemWithRestaurant, error) {
 	queries := dbmodels.New(r.db)
 
-	result, err := queries.ListMenuItemsWithRestaurant(ctx)
+	result, err := queries.ListMenuItemsWithRestaurant(ctx,
+		dbmodels.ListMenuItemsWithRestaurantParams{
+			RestaurantName: params.RestaurantName,
+			OrderBy:        params.OrderBy,
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
