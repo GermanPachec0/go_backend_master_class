@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"eats/backend/common"
-	"eats/backend/common/shared"
 	"eats/backend/orders/adapters/db/dbmodels"
 	"eats/backend/orders/app"
 )
@@ -26,6 +25,18 @@ func NewOrdersRepository(db *pgxpool.Pool) *OrdersRepo {
 	return &OrdersRepo{db: db}
 }
 
+func (r *OrdersRepo) GetRestaurant(
+	ctx context.Context,
+	restaurantID app.RestaurantUUID,
+) (app.Restaurant, error) {
+	queries := dbmodels.New(r.db)
+	dbRestaurant, err := queries.GetRestaurant(ctx, restaurantID)
+	if err != nil {
+		return app.Restaurant{}, fmt.Errorf("failed to get restaurant %s: %w", restaurantID, err)
+	}
+	return appRestaurantFromDB(dbRestaurant), nil
+}
+
 func (r *OrdersRepo) CreateQuote(
 	ctx context.Context,
 	restaurantID app.RestaurantUUID,
@@ -33,8 +44,7 @@ func (r *OrdersRepo) CreateQuote(
 	updateFn func(
 		ctx context.Context,
 		menuItems map[app.RestaurantMenuItemUUID]app.MenuItem,
-		restaurantCurrency shared.Currency,
-		restaurantAddress shared.Address,
+		restaurant app.Restaurant,
 	) (app.Quote, []app.QuoteMenuItem, error),
 ) (app.Quote, error) {
 	var quote app.Quote
@@ -52,13 +62,13 @@ func (r *OrdersRepo) CreateQuote(
 			return err
 		}
 
-		restaurant, err := queries.GetRestaurant(ctx, restaurantID)
+		dbRestaurant, err := queries.GetRestaurant(ctx, restaurantID)
 		if err != nil {
 			return fmt.Errorf("failed to get restaurant currency for restaurant %s: %w", restaurantID, err)
 		}
 
 		var items []app.QuoteMenuItem
-		quote, items, err = updateFn(ctx, appMenuItems, restaurant.Currency, restaurant.Address)
+		quote, items, err = updateFn(ctx, appMenuItems, appRestaurantFromDB(dbRestaurant))
 		if err != nil {
 			return fmt.Errorf("failed to create quote using updateFn: %w", err)
 		}
@@ -135,4 +145,14 @@ func appMenuItemsFromDbMenuItems(dbMenuItems []dbmodels.OrdersRestaurantMenuItem
 	}
 
 	return appMenuItems
+}
+
+func appRestaurantFromDB(r dbmodels.OrdersRestaurant) app.Restaurant {
+	return app.Restaurant{
+		RestaurantUUID: r.RestaurantUuid,
+		Name:           r.Name,
+		Description:    r.Description,
+		Address:        r.Address,
+		Currency:       r.Currency,
+	}
 }
