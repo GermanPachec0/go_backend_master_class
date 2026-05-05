@@ -12,6 +12,7 @@ import (
 type ListMenuItemsFilter struct {
 	RestaurantName *string
 	OrderBy        *string
+	Search         *string
 }
 
 // ReadModel is an interface for the read model that lists menu items.
@@ -173,6 +174,7 @@ func (h Handler) ListMenuItems(ctx context.Context, request ListMenuItemsRequest
 	filter := ListMenuItemsFilter{
 		RestaurantName: request.Params.RestaurantName,
 		OrderBy:        orderBy,
+		Search:         request.Params.Search,
 	}
 
 	items, err := h.readModel.ListMenuItemsWithRestaurant(ctx, filter)

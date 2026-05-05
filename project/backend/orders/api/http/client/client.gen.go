@@ -29,6 +29,7 @@ const (
 	NameDesc  ListMenuItemsParamsOrderBy = "name_desc"
 	PriceAsc  ListMenuItemsParamsOrderBy = "price_asc"
 	PriceDesc ListMenuItemsParamsOrderBy = "price_desc"
+	Relevance ListMenuItemsParamsOrderBy = "relevance"
 )
 
 // Address defines model for Address.
@@ -229,7 +230,10 @@ type ListMenuItemsParams struct {
 	// RestaurantName Filter by restaurant name (case-insensitive partial match)
 	RestaurantName *string `form:"restaurant_name,omitempty" json:"restaurant_name,omitempty"`
 
-	// OrderBy Order results by price or name
+	// Search Full-text search across menu item names and restaurant names
+	Search *string `form:"search,omitempty" json:"search,omitempty"`
+
+	// OrderBy Order results by price, name, or relevance (when searching)
 	OrderBy *ListMenuItemsParamsOrderBy `form:"order_by,omitempty" json:"order_by,omitempty"`
 }
 
@@ -599,6 +603,22 @@ func NewListMenuItemsRequest(server string, params *ListMenuItemsParams) (*http.
 		if params.RestaurantName != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "restaurant_name", runtime.ParamLocationQuery, *params.RestaurantName); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Search != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "search", runtime.ParamLocationQuery, *params.Search); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

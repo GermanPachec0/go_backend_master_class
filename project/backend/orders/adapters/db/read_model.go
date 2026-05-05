@@ -25,10 +25,11 @@ func NewReadModel(db *pgxpool.Pool) *ReadModel {
 func (r ReadModel) ListMenuItemsWithRestaurant(ctx context.Context, params http.ListMenuItemsFilter) ([]http.MenuItemWithRestaurant, error) {
 	queries := dbmodels.New(r.db)
 
-	result, err := queries.ListMenuItemsWithRestaurant(ctx,
-		dbmodels.ListMenuItemsWithRestaurantParams{
-			RestaurantName: params.RestaurantName,
-			OrderBy:        params.OrderBy,
+	result, err := queries.ListMenuItems(ctx,
+		dbmodels.ListMenuItemsParams{
+			RestaurantNameFilter: params.RestaurantName,
+			OrderBy:              params.OrderBy,
+			SearchTerm:           params.Search,
 		},
 	)
 	if err != nil {
@@ -37,12 +38,12 @@ func (r ReadModel) ListMenuItemsWithRestaurant(ctx context.Context, params http.
 	var menuItemsWithRestaurant []http.MenuItemWithRestaurant
 	for _, item := range result {
 		menuItemsWithRestaurant = append(menuItemsWithRestaurant, http.MenuItemWithRestaurant{
-			MenuItemUuid:   item.OrdersRestaurantMenuItem.RestaurantMenuItemUuid,
-			MenuItemName:   item.OrdersRestaurantMenuItem.Name,
-			GrossPrice:     item.OrdersRestaurantMenuItem.GrossPrice,
-			RestaurantUuid: item.OrdersRestaurant.RestaurantUuid,
-			RestaurantName: item.OrdersRestaurant.Name,
-			Currency:       item.OrdersRestaurant.Currency,
+			MenuItemUuid:   item.MenuItemUuid,
+			MenuItemName:   item.MenuItemName,
+			GrossPrice:     item.GrossPrice,
+			RestaurantUuid: item.RestaurantUuid,
+			RestaurantName: item.RestaurantName,
+			Currency:       item.Currency,
 		})
 	}
 

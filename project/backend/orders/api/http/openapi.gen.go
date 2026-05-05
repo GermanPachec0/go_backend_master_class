@@ -27,6 +27,7 @@ const (
 	NameDesc  ListMenuItemsParamsOrderBy = "name_desc"
 	PriceAsc  ListMenuItemsParamsOrderBy = "price_asc"
 	PriceDesc ListMenuItemsParamsOrderBy = "price_desc"
+	Relevance ListMenuItemsParamsOrderBy = "relevance"
 )
 
 // Address defines model for Address.
@@ -227,7 +228,10 @@ type ListMenuItemsParams struct {
 	// RestaurantName Filter by restaurant name (case-insensitive partial match)
 	RestaurantName *string `form:"restaurant_name,omitempty" json:"restaurant_name,omitempty"`
 
-	// OrderBy Order results by price or name
+	// Search Full-text search across menu item names and restaurant names
+	Search *string `form:"search,omitempty" json:"search,omitempty"`
+
+	// OrderBy Order results by price, name, or relevance (when searching)
 	OrderBy *ListMenuItemsParamsOrderBy `form:"order_by,omitempty" json:"order_by,omitempty"`
 }
 
@@ -353,6 +357,13 @@ func (w *ServerInterfaceWrapper) ListMenuItems(ctx echo.Context) error {
 	err = runtime.BindQueryParameter("form", true, false, "restaurant_name", ctx.QueryParams(), &params.RestaurantName)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter restaurant_name: %s", err))
+	}
+
+	// ------------- Optional query parameter "search" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "search", ctx.QueryParams(), &params.Search)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter search: %s", err))
 	}
 
 	// ------------- Optional query parameter "order_by" -------------

@@ -135,59 +135,80 @@ func (q *Queries) GetRestaurantMenu(ctx context.Context, restaurantUuid app.Rest
 	return items, nil
 }
 
-const listMenuItemsWithRestaurant = `-- name: ListMenuItemsWithRestaurant :many
+const listMenuItems = `-- name: ListMenuItems :many
 SELECT
-	restaurant_menu_items.restaurant_menu_item_uuid, restaurant_menu_items.restaurant_uuid, restaurant_menu_items.name, restaurant_menu_items.gross_price, restaurant_menu_items.ordering, restaurant_menu_items.is_archived,
-	restaurants.restaurant_uuid, restaurants.name, restaurants.description, restaurants.address, restaurants.currency
-FROM
-	orders.restaurant_menu_items AS restaurant_menu_items
-JOIN
-	orders.restaurants AS restaurants ON restaurant_menu_items.restaurant_uuid = restaurants.restaurant_uuid
-WHERE
-	restaurant_menu_items.is_archived = FALSE
-	AND ($1::text IS NULL OR LOWER(restaurants.name) LIKE LOWER('%' || $1 || '%'))
+    mi.restaurant_menu_item_uuid AS menu_item_uuid,
+    mi.name AS menu_item_name,
+    mi.gross_price,
+    r.currency,
+    r.restaurant_uuid,
+    r.name AS restaurant_name,
+    CASE WHEN $1::text IS NOT NULL
+         THEN ts_rank(
+             to_tsvector('english', mi.name),
+             plainto_tsquery('english', $1::text)
+         )
+         ELSE NULL
+    END AS relevance
+FROM orders.restaurant_menu_items mi
+JOIN orders.restaurants r ON mi.restaurant_uuid = r.restaurant_uuid
+WHERE mi.is_archived = false
+  AND ($1::text IS NULL
+       OR to_tsvector('english', mi.name) @@ plainto_tsquery('english', $1::text))
+  AND ($2::text IS NULL
+       OR LOWER(r.name) LIKE LOWER('%' || $2::text || '%'))
 ORDER BY
-    CASE WHEN $2::text = 'price_asc' THEN restaurant_menu_items.gross_price END ASC,
-    CASE WHEN $2::text = 'price_desc' THEN restaurant_menu_items.gross_price END DESC,
-    CASE WHEN $2::text = 'name_asc' THEN restaurants.name END ASC,
-    CASE WHEN $2::text = 'name_desc' THEN restaurants.name END DESC,
-	CASE WHEN ($2::text IS NULL OR $2::text = 'default')
-         THEN restaurants.name END ASC,
-    CASE WHEN ($2::text IS NULL OR $2::text = 'default')
-         THEN restaurant_menu_items.ordering END ASC
+    CASE WHEN $3::text = 'relevance'
+         THEN ts_rank(
+             to_tsvector('english', mi.name),
+             plainto_tsquery('english', $1::text)
+         )
+    END DESC,
+    CASE WHEN ($3::text IS NULL OR $3::text = 'default')
+         THEN r.name END ASC,
+    CASE WHEN ($3::text IS NULL OR $3::text = 'default')
+         THEN mi.ordering END ASC,
+    CASE WHEN $3::text = 'price_asc' THEN mi.gross_price END ASC,
+    CASE WHEN $3::text = 'price_desc' THEN mi.gross_price END DESC,
+    CASE WHEN $3::text = 'name_asc' THEN mi.name END ASC,
+    CASE WHEN $3::text = 'name_desc' THEN mi.name END DESC
 `
 
-type ListMenuItemsWithRestaurantParams struct {
-	RestaurantName *string
-	OrderBy        *string
+type ListMenuItemsParams struct {
+	SearchTerm           *string
+	RestaurantNameFilter *string
+	OrderBy              *string
 }
 
-type ListMenuItemsWithRestaurantRow struct {
-	OrdersRestaurantMenuItem OrdersRestaurantMenuItem
-	OrdersRestaurant         OrdersRestaurant
+type ListMenuItemsRow struct {
+	MenuItemUuid   app.RestaurantMenuItemUUID
+	MenuItemName   string
+	GrossPrice     decimal.Decimal
+	Currency       shared.Currency
+	RestaurantUuid app.RestaurantUUID
+	RestaurantName string
+	Relevance      interface{}
 }
 
-func (q *Queries) ListMenuItemsWithRestaurant(ctx context.Context, arg ListMenuItemsWithRestaurantParams) ([]ListMenuItemsWithRestaurantRow, error) {
-	rows, err := q.db.Query(ctx, listMenuItemsWithRestaurant, arg.RestaurantName, arg.OrderBy)
+// Lists menu items with optional restaurant name filter, optional full-text search, and dynamic ordering.
+// Uses CASE WHEN to support multiple ordering options in a single query.
+func (q *Queries) ListMenuItems(ctx context.Context, arg ListMenuItemsParams) ([]ListMenuItemsRow, error) {
+	rows, err := q.db.Query(ctx, listMenuItems, arg.SearchTerm, arg.RestaurantNameFilter, arg.OrderBy)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListMenuItemsWithRestaurantRow{}
+	items := []ListMenuItemsRow{}
 	for rows.Next() {
-		var i ListMenuItemsWithRestaurantRow
+		var i ListMenuItemsRow
 		if err := rows.Scan(
-			&i.OrdersRestaurantMenuItem.RestaurantMenuItemUuid,
-			&i.OrdersRestaurantMenuItem.RestaurantUuid,
-			&i.OrdersRestaurantMenuItem.Name,
-			&i.OrdersRestaurantMenuItem.GrossPrice,
-			&i.OrdersRestaurantMenuItem.Ordering,
-			&i.OrdersRestaurantMenuItem.IsArchived,
-			&i.OrdersRestaurant.RestaurantUuid,
-			&i.OrdersRestaurant.Name,
-			&i.OrdersRestaurant.Description,
-			&i.OrdersRestaurant.Address,
-			&i.OrdersRestaurant.Currency,
+			&i.MenuItemUuid,
+			&i.MenuItemName,
+			&i.GrossPrice,
+			&i.Currency,
+			&i.RestaurantUuid,
+			&i.RestaurantName,
+			&i.Relevance,
 		); err != nil {
 			return nil, err
 		}
