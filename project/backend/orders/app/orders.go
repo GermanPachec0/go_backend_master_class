@@ -9,6 +9,7 @@ import (
 
 	"eats/backend/common"
 	"eats/backend/common/shared"
+	"eats/backend/delivery/api/module/client"
 )
 
 type QuoteUUID struct {
@@ -56,10 +57,11 @@ type OrderRepository interface {
 		updateFn func(
 			ctx context.Context,
 			menuItems map[RestaurantMenuItemUUID]MenuItem,
-			restaurantCurrency shared.Currency,
-			restaurantAddress shared.Address,
+			restaurant Restaurant,
 		) (Quote, []QuoteMenuItem, error),
 	) (Quote, error)
+
+	GetRestaurant(ctx context.Context, restaurantUUID RestaurantUUID) (Restaurant, error)
 }
 
 type CreateQuote struct {
@@ -126,6 +128,20 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 			Quantity:     item.Quantity,
 		})
 	}
+	restaurant, err := s.orderRepository.GetRestaurant(ctx, req.RestaurantUUID)
+	if err != nil {
+		return Quote{}, err
+	}
+
+	deliveryFee, err := s.modules.CalculateDeliveryFee(ctx, client.CalculateDeliveryFeeRequest{
+		RestaurantAddress: restaurant.Address,
+		DeliveryAddress:   req.DeliveryAddress,
+		Currency:          restaurant.Currency,
+		When:              time.Now(),
+	})
+	if err != nil {
+		return Quote{}, fmt.Errorf("error calculating delivery fee for quote: %w", err)
+	}
 
 	return s.orderRepository.CreateQuote(
 		ctx,
@@ -134,8 +150,7 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 		func(
 			ctx context.Context,
 			menuItems map[RestaurantMenuItemUUID]MenuItem,
-			restaurantCurrency shared.Currency,
-			restaurantAddress shared.Address,
+			restaurant Restaurant,
 		) (Quote, []QuoteMenuItem, error) {
 			// Re-validate inside the transaction for consistency: menu items or restaurant data
 			// may have changed between the pre-transaction reads and the commit.
@@ -143,14 +158,14 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 				return Quote{}, nil, err
 			}
 
-			if restaurantAddress.City != req.DeliveryAddress.City {
+			if restaurant.Address.City != req.DeliveryAddress.City {
 				return Quote{}, nil, common.NewInvalidInputError(
 					"address-out-of-delivery-zone",
 					"restaurant does not deliver to the provided address",
 				).WithDetails([]common.ErrorDetails{{
 					EntityType: "quote",
 					ErrorSlug:  "address-out-of-delivery-zone",
-					Message:    fmt.Sprintf("restaurant delivers to %s only", restaurantAddress.City),
+					Message:    fmt.Sprintf("restaurant delivers to %s only", restaurant.Address.City),
 				}})
 			}
 
@@ -171,7 +186,7 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 
 			serviceFeeGross := itemsSubtotal.Mul(decimal.RequireFromString("0.06")).RoundBank(2) // 6%
 
-			deliveryFeeGross := decimal.NewFromInt(10)
+			deliveryFeeGross := deliveryFee.GrossFee
 
 			totalAmount := itemsSubtotal.Add(serviceFeeGross).Add(deliveryFeeGross)
 
@@ -189,10 +204,14 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 
 				TotalTax: totalAmount.Div(decimal.RequireFromString("1.23")).RoundBank(2),
 
-				Currency: restaurantCurrency,
+				Currency: restaurant.Currency,
 			}, quoteItemPositions, nil
 		},
 	)
+}
+
+func (s *Service) GetRestaurant(ctx context.Context, restaurantUUID RestaurantUUID) (Restaurant, error) {
+	return s.orderRepository.GetRestaurant(ctx, restaurantUUID)
 }
 
 func ensureQuoteItemsAreNotArchived(menuItems map[RestaurantMenuItemUUID]MenuItem) error {
