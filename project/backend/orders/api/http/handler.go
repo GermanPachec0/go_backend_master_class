@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"strings"
 
 	"eats/backend/common"
 	"eats/backend/common/shared"
@@ -183,6 +184,56 @@ func (h Handler) ListMenuItems(ctx context.Context, request ListMenuItemsRequest
 	}
 
 	return ListMenuItems200JSONResponse(items), nil
+}
+
+func (h Handler) RegisterCourier(ctx context.Context, request RegisterCourierRequestObject) (RegisterCourierResponseObject, error) {
+	var validationErrors []ErrorDetails
+
+	if strings.TrimSpace(request.Body.Name) == "" {
+		validationErrors = append(validationErrors, ErrorDetails{
+			ErrorSlug: "empty-name",
+			Message:   "name cannot be empty",
+		})
+	}
+
+	if strings.TrimSpace(request.Body.City) == "" {
+		validationErrors = append(validationErrors, ErrorDetails{
+			ErrorSlug: "empty-city",
+			Message:   "city cannot be empty",
+		})
+	}
+
+	if strings.TrimSpace(request.Body.PhoneNumber) == "" {
+		validationErrors = append(validationErrors, ErrorDetails{
+			ErrorSlug: "empty-phone-number",
+			Message:   "phone number cannot be empty",
+		})
+	}
+
+	if len(validationErrors) > 0 {
+		return RegisterCourier400JSONResponse{
+			BadRequestJSONResponse: BadRequestJSONResponse{
+				Slug:    "invalid-courier-data",
+				Message: "invalid courier data",
+				Details: validationErrors,
+			},
+		}, nil
+	}
+
+	courierUUID := CourierUUID{common.NewUUIDv7()}
+	courierUUID, err := h.service.RegisterCourier(ctx, app.Courier{
+		CourierUUID: courierUUID,
+		Name:        request.Body.Name,
+		PhoneNumber: request.Body.PhoneNumber,
+		City:        request.Body.City,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return RegisterCourier201JSONResponse{
+		CourierUuid: courierUUID,
+	}, nil
 }
 
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {

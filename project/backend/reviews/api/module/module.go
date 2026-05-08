@@ -23,7 +23,13 @@ func New(service *app.Service) *Review {
 func (i Review) MakeReview(ctx context.Context, req client.MakeReviewRequest) (client.MakeReviewResponse, error) {
 	err := i.service.MakeReview(
 		ctx,
-		req.Review,
+		app.Review{
+			CustomerName:   req.CustomerName,
+			RestaurantName: req.RestaurantName,
+			CourierName:    req.CourierName,
+			Rating:         req.Rating,
+			Comment:        req.Comment,
+		},
 	)
 	if err != nil {
 		return client.MakeReviewResponse{}, fmt.Errorf("failed to make review: %w", err)

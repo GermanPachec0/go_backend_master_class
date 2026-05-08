@@ -16,5 +16,4 @@ type MakeReviewRequest struct {
 	Comment        string
 }
 
-type MakeReviewResponse struct {
-}
+type MakeReviewResponse struct{}
