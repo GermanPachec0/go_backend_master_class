@@ -10,6 +10,7 @@ import (
 	"eats/backend/common"
 	"eats/backend/common/shared"
 	"eats/backend/delivery/api/module/client"
+	review_client "eats/backend/reviews/api/module/client"
 )
 
 type QuoteUUID struct {
@@ -141,6 +142,17 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 	})
 	if err != nil {
 		return Quote{}, fmt.Errorf("error calculating delivery fee for quote: %w", err)
+	}
+
+	_, err = s.modules.MakeReview(ctx, review_client.MakeReviewRequest{
+		CustomerName:   req.CustomerUUID.String(),
+		RestaurantName: restaurant.Name,
+		CourierName:    "pepe",
+		Rating:         10,
+		Comment:        "good",
+	})
+	if err != nil {
+		return Quote{}, fmt.Errorf("error making review for quote: %w", err)
 	}
 
 	return s.orderRepository.CreateQuote(

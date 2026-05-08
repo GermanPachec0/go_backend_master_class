@@ -16,6 +16,7 @@ import (
 	"eats/backend/common/module/contracts"
 	"eats/backend/delivery"
 	"eats/backend/orders"
+	"eats/backend/reviews"
 )
 
 type Svc struct {
@@ -39,6 +40,7 @@ func New(
 	modules := []module.Module{
 		orders.NewModule(dbPgx, moduleContracts),
 		delivery.NewModule(),
+		reviews.NewModule(),
 	}
 
 	for _, module := range modules {

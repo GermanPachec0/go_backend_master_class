@@ -4,10 +4,12 @@ import (
 	"context"
 
 	"eats/backend/delivery/api/module/client"
+	review_client "eats/backend/reviews/api/module/client"
 )
 
 type ModulesContract interface {
 	CalculateDeliveryFee(ctx context.Context, req client.CalculateDeliveryFeeRequest) (client.CalculateDeliveryFeeResponse, error)
+	MakeReview(ctx context.Context, req review_client.MakeReviewRequest) (review_client.MakeReviewResponse, error)
 }
 
 type Service struct {
