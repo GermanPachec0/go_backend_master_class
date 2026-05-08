@@ -12,7 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"eats/backend"
+	eats "eats/backend"
 	commonHTTP "eats/backend/common/http"
 	"eats/backend/common/log"
 	ordersclient "eats/backend/orders/api/http/client"
@@ -68,7 +68,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	svc, err := backend.New(
+	svc, err := eats.New(
 		ctx,
 		dbPgx,
 	)
