@@ -74,17 +74,17 @@ func (r *OrdersRepo) CreateQuote(
 		}
 
 		err = queries.AddQuote(ctx, dbmodels.AddQuoteParams{
-			quote.QuoteUUID,
-			quote.CustomerUUID,
-			quote.RestaurantUUID,
-			quote.DeliveryAddress,
-			quote.ItemsSubtotalGross,
-			quote.ServiceFeeGross,
-			quote.DeliveryFeeGross,
-			quote.TotalAmountGross,
-			quote.TotalTax,
-			time.Now(),
-			quote.Currency,
+			QuoteUuid:          quote.QuoteUUID,
+			CustomerUuid:       quote.CustomerUUID,
+			RestaurantUuid:     quote.RestaurantUUID,
+			DeliveryAddress:    quote.DeliveryAddress,
+			ItemsSubtotalGross: quote.ItemsSubtotalGross,
+			ServiceFeeGross:    quote.ServiceFeeGross,
+			DeliveryFeeGross:   quote.DeliveryFeeGross,
+			TotalAmountGross:   quote.TotalAmountGross,
+			TotalTax:           quote.TotalTax,
+			CreatedAt:          time.Now(),
+			Currency:           quote.Currency,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to add quote %s: %w", quote.QuoteUUID, err)
@@ -151,7 +151,8 @@ func (r *OrdersRepo) PlaceOrder(ctx context.Context, quote app.Quote) (app.Order
 	var order app.Order
 	err := common.UpdateInTx(ctx, r.db, func(ctx context.Context, tx pgx.Tx) error {
 		queries := dbmodels.New(tx)
-		orderUUID := app.OrderUUID{common.NewUUIDv7()}
+		orderUUID := app.OrderUUID{UUID: common.NewUUIDv7()}
+		orderedAt := time.Now()
 
 		err := queries.InsertOrder(ctx, dbmodels.InsertOrderParams{
 			OrderUuid:          orderUUID,
@@ -159,6 +160,7 @@ func (r *OrdersRepo) PlaceOrder(ctx context.Context, quote app.Quote) (app.Order
 			CustomerUuid:       quote.CustomerUUID,
 			RestaurantUuid:     quote.RestaurantUUID,
 			DeliveryAddress:    quote.DeliveryAddress,
+			OrderedAt:          orderedAt,
 			ItemsSubtotalGross: quote.ItemsSubtotalGross,
 			ServiceFeeGross:    quote.ServiceFeeGross,
 			DeliveryFeeGross:   quote.DeliveryFeeGross,
@@ -177,6 +179,7 @@ func (r *OrdersRepo) PlaceOrder(ctx context.Context, quote app.Quote) (app.Order
 			CustomerUUID:       quote.CustomerUUID,
 			RestaurantUUID:     quote.RestaurantUUID,
 			DeliveryAddress:    quote.DeliveryAddress,
+			OrderedAt:          orderedAt,
 			ItemsSubtotalGross: quote.ItemsSubtotalGross,
 			ServiceFeeGross:    quote.ServiceFeeGross,
 			DeliveryFeeGross:   quote.DeliveryFeeGross,
@@ -188,7 +191,6 @@ func (r *OrdersRepo) PlaceOrder(ctx context.Context, quote app.Quote) (app.Order
 
 		return nil
 	})
-
 	if err != nil {
 		return app.Order{}, err
 	}
@@ -200,11 +202,11 @@ func dbQuoteItemsFromApp(menuItems []app.QuoteMenuItem, quote app.Quote) []dbmod
 	quoteItems := make([]dbmodels.AddQuoteItemsParams, 0, len(menuItems))
 	for _, position := range menuItems {
 		quoteItems = append(quoteItems, dbmodels.AddQuoteItemsParams{
-			common.NewUUIDv7(),
-			quote.QuoteUUID,
-			position.MenuItemUUID,
-			position.GrossPrice,
-			int32(position.Quantity),
+			QuoteItemUuid: common.NewUUIDv7(),
+			QuoteUuid:     quote.QuoteUUID,
+			MenuItemUuid:  position.MenuItemUUID,
+			GrossPrice:    position.GrossPrice,
+			Quantity:      int32(position.Quantity),
 		})
 	}
 	return quoteItems
@@ -227,11 +229,11 @@ func appMenuItemsFromDbMenuItems(dbMenuItems []dbmodels.OrdersRestaurantMenuItem
 
 	for _, dbItemPosition := range dbMenuItems {
 		appMenuItems[dbItemPosition.RestaurantMenuItemUuid] = app.MenuItem{
-			dbItemPosition.RestaurantMenuItemUuid,
-			dbItemPosition.Name,
-			dbItemPosition.Ordering,
-			dbItemPosition.GrossPrice,
-			dbItemPosition.IsArchived,
+			MenuItemUUID: dbItemPosition.RestaurantMenuItemUuid,
+			Name:         dbItemPosition.Name,
+			Ordering:     dbItemPosition.Ordering,
+			GrossPrice:   dbItemPosition.GrossPrice,
+			IsArchived:   dbItemPosition.IsArchived,
 		}
 	}
 

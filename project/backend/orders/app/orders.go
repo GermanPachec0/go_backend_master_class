@@ -251,8 +251,8 @@ func (s *Service) PlaceOrder(ctx context.Context, quoteUUID QuoteUUID, paymentNo
 	}
 	// verify that the customers owns the quote
 	if quote.CustomerUUID != customerUUID {
-		return Order{}, common.NewUnauthorizedError(
-			"quote-ownership-mismatch",
+		return Order{}, common.NewForbiddenError(
+			"invalid-customer",
 			"customer does not own the quote",
 		)
 	}
@@ -280,7 +280,7 @@ func (s *Service) PlaceOrder(ctx context.Context, quoteUUID QuoteUUID, paymentNo
 	// capture payments
 
 	totalAmount := quote.TotalAmountGross
-	err = s.paymentClient.CapturePayment(ctx, paymentNonce, totalAmount, "")
+	err = s.paymentClient.CapturePayment(ctx, paymentNonce, totalAmount, quote.RestaurantUUID.String())
 	if err != nil {
 		return Order{}, err
 	}
@@ -311,7 +311,7 @@ func ensureQuoteItemsAreNotArchived(menuItems map[RestaurantMenuItemUUID]MenuIte
 	}
 
 	return common.NewExpiredError(
-		"unavailable-menu-items",
+		"archived-menu-position",
 		"one or more menu items are not available",
 	).WithInternalError(fmt.Errorf(
 		"archived menu items in order: %v",

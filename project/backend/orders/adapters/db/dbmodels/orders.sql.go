@@ -176,6 +176,7 @@ INSERT INTO orders.orders (
 	customer_uuid,
 	restaurant_uuid,
 	delivery_address,
+	ordered_at,
 	items_subtotal_gross,
 	service_fee_gross,
 	delivery_fee_gross,
@@ -185,7 +186,7 @@ INSERT INTO orders.orders (
 	currency
 )
 VALUES
-	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING order_uuid, quote_uuid, customer_uuid, restaurant_uuid, courier_uuid, delivery_address, ordered_at, restaurant_confirmed_at, courier_accepted_at, restaurant_prepared_at, picked_up_at, delivered_at, items_subtotal_gross, service_fee_gross, delivery_fee_gross, total_amount_gross, total_tax, currency
 `
 
@@ -195,6 +196,7 @@ type InsertOrderParams struct {
 	CustomerUuid       app.CustomerUUID
 	RestaurantUuid     app.RestaurantUUID
 	DeliveryAddress    shared.Address
+	OrderedAt          time.Time
 	ItemsSubtotalGross decimal.Decimal
 	ServiceFeeGross    decimal.Decimal
 	DeliveryFeeGross   decimal.Decimal
@@ -211,6 +213,7 @@ func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) error 
 		arg.CustomerUuid,
 		arg.RestaurantUuid,
 		arg.DeliveryAddress,
+		arg.OrderedAt,
 		arg.ItemsSubtotalGross,
 		arg.ServiceFeeGross,
 		arg.DeliveryFeeGross,

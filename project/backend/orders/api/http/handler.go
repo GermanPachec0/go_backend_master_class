@@ -52,7 +52,7 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
 	}
 
-	customerUUID := CustomerUUID{common.NewUUIDv7()}
+	customerUUID := CustomerUUID{UUID: common.NewUUIDv7()}
 
 	err = h.service.RegisterCustomer(ctx, app.Customer{
 		CustomerUUID: customerUUID,
@@ -106,10 +106,10 @@ func (h Handler) CustomerCreateQuote(ctx context.Context, request CustomerCreate
 	}
 
 	quote, err := h.service.CreateQuote(ctx, app.CreateQuote{
-		request.Params.CustomerUUID,
-		request.Body.RestaurantUuid,
-		items,
-		addr,
+		CustomerUUID:    request.Params.CustomerUUID,
+		RestaurantUUID:  request.Body.RestaurantUuid,
+		QuoteItems:      items,
+		DeliveryAddress: addr,
 	})
 	if err != nil {
 		return nil, err
@@ -151,11 +151,11 @@ func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestauran
 		ctx,
 		request.RestaurantUuid,
 		app.OnboardRestaurant{
-			request.Body.Name,
-			addr,
-			request.Body.Currency,
-			request.Body.Description,
-			menuItems,
+			Name:        request.Body.Name,
+			Address:     addr,
+			Currency:    request.Body.Currency,
+			Description: request.Body.Description,
+			MenuItems:   menuItems,
 		},
 	)
 	if err != nil {
@@ -221,8 +221,7 @@ func (h Handler) CustomerPlaceOrder(ctx context.Context, request CustomerPlaceOr
 }
 
 func (h Handler) RegisterCourier(ctx context.Context, request RegisterCourierRequestObject) (RegisterCourierResponseObject, error) {
-
-	courierUUID := app.CourierUUID{common.NewUUIDv7()}
+	courierUUID := app.CourierUUID{UUID: common.NewUUIDv7()}
 	courierUUID, err := h.service.RegisterCourier(ctx, app.Courier{
 		CourierUUID: courierUUID,
 		Name:        request.Body.Name,

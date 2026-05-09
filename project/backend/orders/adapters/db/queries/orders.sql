@@ -36,6 +36,7 @@ INSERT INTO orders.orders (
 	customer_uuid,
 	restaurant_uuid,
 	delivery_address,
+	ordered_at,
 	items_subtotal_gross,
 	service_fee_gross,
 	delivery_fee_gross,
@@ -45,7 +46,7 @@ INSERT INTO orders.orders (
 	currency
 )
 VALUES
-	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING *;
 
 -- name: GetQuoteItems :many
