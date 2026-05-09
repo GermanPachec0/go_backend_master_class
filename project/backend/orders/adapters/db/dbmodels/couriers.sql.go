@@ -8,7 +8,7 @@ package dbmodels
 import (
 	"context"
 
-	"eats/backend/orders/app"
+	"eats/backend/common"
 )
 
 const insertCourier = `-- name: InsertCourier :exec
@@ -23,7 +23,7 @@ RETURNING courier_uuid
 `
 
 type InsertCourierParams struct {
-	CourierUuid app.CourierUUID
+	CourierUuid common.UUID
 	Name        string
 	PhoneNumber string
 	City        string

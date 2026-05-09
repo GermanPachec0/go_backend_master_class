@@ -22,12 +22,14 @@ type ReadModel interface {
 }
 
 type Handler struct {
-	service   *app.Service
-	readModel ReadModel
+	service        *app.Service
+	restaurantRepo app.RestaurantRepository
+	readModel      ReadModel
 }
 
 func NewHandler(
 	service *app.Service,
+	restaurantRepository app.RestaurantRepository,
 	readModel ReadModel,
 ) Handler {
 	if service == nil {
@@ -38,8 +40,9 @@ func NewHandler(
 	}
 
 	return Handler{
-		service:   service,
-		readModel: readModel,
+		service:        service,
+		restaurantRepo: restaurantRepository,
+		readModel:      readModel,
 	}
 }
 
@@ -183,6 +186,56 @@ func (h Handler) ListMenuItems(ctx context.Context, request ListMenuItemsRequest
 	}
 
 	return ListMenuItems200JSONResponse(items), nil
+}
+
+func (h Handler) CustomerPlaceOrder(ctx context.Context, request CustomerPlaceOrderRequestObject) (CustomerPlaceOrderResponseObject, error) {
+	if request.Params.CustomerUUID.IsZero() {
+		return nil, common.NewUnauthorizedError("missing-customer-uuid", "customer UUID is required")
+	}
+
+	order, err := h.service.PlaceOrder(ctx, request.Body.QuoteUuid, request.Body.PaymentNonce, request.Params.CustomerUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	address := Address{
+		Line1:       order.DeliveryAddress.Line1,
+		Line2:       order.DeliveryAddress.Line2,
+		City:        order.DeliveryAddress.City,
+		CountryCode: order.DeliveryAddress.CountryCode,
+		PostalCode:  order.DeliveryAddress.PostalCode,
+	}
+	return CustomerPlaceOrder201JSONResponse{
+		CourierAcceptedAt:  order.CourierAcceptedAt,
+		CourierUuid:        order.CourierUUID,
+		Currency:           order.Currency,
+		DeliveryAddress:    address,
+		DeliveryFeeGross:   order.DeliveryFeeGross,
+		ItemsSubtotalGross: order.ItemsSubtotalGross,
+		OrderUuid:          order.OrderUUID,
+		RestaurantUuid:     order.RestaurantUUID,
+		ServiceFeeGross:    order.ServiceFeeGross,
+		TotalGross:         order.TotalAmountGross,
+		TotalTax:           order.TotalTax,
+	}, nil
+}
+
+func (h Handler) RegisterCourier(ctx context.Context, request RegisterCourierRequestObject) (RegisterCourierResponseObject, error) {
+
+	courierUUID := app.CourierUUID{common.NewUUIDv7()}
+	courierUUID, err := h.service.RegisterCourier(ctx, app.Courier{
+		CourierUUID: courierUUID,
+		Name:        request.Body.Name,
+		PhoneNumber: request.Body.PhoneNumber,
+		City:        request.Body.City,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return RegisterCourier201JSONResponse{
+		CourierUuid: courierUUID,
+	}, nil
 }
 
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {

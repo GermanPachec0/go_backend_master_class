@@ -25,7 +25,7 @@ func (r *CourierRepository) RegisterCourier(ctx context.Context, courier app.Cou
 		queries := dbmodels.New(tx)
 
 		err := queries.InsertCourier(ctx, dbmodels.InsertCourierParams{
-			CourierUuid: courier.CourierUUID,
+			CourierUuid: courier.CourierUUID.UUID,
 			Name:        courier.Name,
 			PhoneNumber: courier.PhoneNumber,
 			City:        courier.City,

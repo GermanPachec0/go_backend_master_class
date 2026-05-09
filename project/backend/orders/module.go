@@ -54,8 +54,9 @@ func (m *Module) Init(ctx context.Context) error {
 
 	httpHandler := http2.NewHandler(
 		appService,
-		readModel,
 		restaurantRepo,
+
+		readModel,
 	)
 	m.httpHandler = httpHandler
 

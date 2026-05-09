@@ -29,6 +29,25 @@ INSERT INTO orders.quote_items (
 VALUES
 	($1, $2, $3, $4, $5);
 
+-- name: InsertOrder :exec
+INSERT INTO orders.orders (
+	order_uuid,
+	quote_uuid,
+	customer_uuid,
+	restaurant_uuid,
+	delivery_address,
+	items_subtotal_gross,
+	service_fee_gross,
+	delivery_fee_gross,
+	total_amount_gross,
+	total_tax,
+	courier_uuid,
+	currency
+)
+VALUES
+	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING *;
+
 -- name: GetQuoteItems :many
 SELECT *
 FROM orders.quote_items
@@ -42,3 +61,13 @@ FROM
 WHERE
 	quote_uuid = $1
 LIMIT 1;
+
+
+-- name: GetMenuItemsForQuote :many
+SELECT
+	mi.*
+FROM orders.quote_items AS qi
+INNER JOIN  orders.restaurant_menu_items AS mi ON mi.restaurant_menu_item_uuid = qi.menu_item_uuid
+WHERE qi.quote_uuid = $1
+;
+	

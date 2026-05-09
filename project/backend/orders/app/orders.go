@@ -12,6 +12,25 @@ import (
 	"eats/backend/delivery/api/module/client"
 )
 
+type OrderRepository interface {
+	CreateQuote(
+		ctx context.Context,
+		restaurantUUID RestaurantUUID,
+		menuItems CreateQuoteItems,
+		updateFn func(
+			ctx context.Context,
+			menuItems map[RestaurantMenuItemUUID]MenuItem,
+			restaurant Restaurant,
+		) (Quote, []QuoteMenuItem, error),
+	) (Quote, error)
+
+	GetRestaurant(ctx context.Context, restaurantUUID RestaurantUUID) (Restaurant, error)
+
+	GetQuote(ctx context.Context, quoteUUID QuoteUUID) (Quote, error)
+	GetMenuItemsForQuote(ctx context.Context, quoteUUID QuoteUUID) ([]MenuItem, error)
+	PlaceOrder(ctx context.Context, quote Quote) (Order, error)
+}
+
 type QuoteUUID struct {
 	common.UUID
 }
@@ -34,6 +53,31 @@ type Quote struct {
 	CreatedAt time.Time
 }
 
+type OrderUUID struct {
+	common.UUID
+}
+
+type Order struct {
+	OrderUUID             OrderUUID
+	QuoteUUID             QuoteUUID
+	CustomerUUID          CustomerUUID
+	RestaurantUUID        RestaurantUUID
+	CourierUUID           *CourierUUID
+	DeliveryAddress       shared.Address
+	OrderedAt             time.Time
+	RestaurantConfirmedAt *time.Time
+	CourierAcceptedAt     *time.Time
+	RestaurantPreparedAt  *time.Time
+	PickedUpAt            *time.Time
+	DeliveredAt           *time.Time
+	ItemsSubtotalGross    decimal.Decimal
+	ServiceFeeGross       decimal.Decimal
+	DeliveryFeeGross      decimal.Decimal
+	TotalAmountGross      decimal.Decimal
+	TotalTax              decimal.Decimal
+	Currency              shared.Currency
+}
+
 func (c Quote) Expired() bool {
 	return time.Now().After(c.ExpirationTime())
 }
@@ -47,21 +91,6 @@ type QuoteMenuItem struct {
 
 	GrossPrice decimal.Decimal
 	Quantity   int
-}
-
-type OrderRepository interface {
-	CreateQuote(
-		ctx context.Context,
-		restaurantUUID RestaurantUUID,
-		menuItems CreateQuoteItems,
-		updateFn func(
-			ctx context.Context,
-			menuItems map[RestaurantMenuItemUUID]MenuItem,
-			restaurant Restaurant,
-		) (Quote, []QuoteMenuItem, error),
-	) (Quote, error)
-
-	GetRestaurant(ctx context.Context, restaurantUUID RestaurantUUID) (Restaurant, error)
 }
 
 type CreateQuote struct {
@@ -212,6 +241,51 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 
 func (s *Service) GetRestaurant(ctx context.Context, restaurantUUID RestaurantUUID) (Restaurant, error) {
 	return s.orderRepository.GetRestaurant(ctx, restaurantUUID)
+}
+
+func (s *Service) PlaceOrder(ctx context.Context, quoteUUID QuoteUUID, paymentNonce string, customerUUID CustomerUUID) (Order, error) {
+	// Get Quotes and the menu items
+	quote, err := s.orderRepository.GetQuote(ctx, quoteUUID)
+	if err != nil {
+		return Order{}, err
+	}
+	// verify that the customers owns the quote
+	if quote.CustomerUUID != customerUUID {
+		return Order{}, common.NewUnauthorizedError(
+			"quote-ownership-mismatch",
+			"customer does not own the quote",
+		)
+	}
+	// check that the quote is not expired
+	if quote.Expired() {
+		return Order{}, common.NewExpiredError(
+			"quote-expired",
+			"quote has expired",
+		)
+	}
+
+	menuItems, err := s.orderRepository.GetMenuItemsForQuote(ctx, quoteUUID)
+	if err != nil {
+		return Order{}, err
+	}
+	restaurantMenuItems := make(map[RestaurantMenuItemUUID]MenuItem)
+	for _, item := range menuItems {
+		restaurantMenuItems[item.MenuItemUUID] = item
+	}
+
+	if err := ensureQuoteItemsAreNotArchived(restaurantMenuItems); err != nil {
+		return Order{}, err
+	}
+
+	// capture payments
+
+	totalAmount := quote.TotalAmountGross
+	err = s.paymentClient.CapturePayment(ctx, paymentNonce, totalAmount, "")
+	if err != nil {
+		return Order{}, err
+	}
+	// persist order
+	return s.orderRepository.PlaceOrder(ctx, quote)
 }
 
 func ensureQuoteItemsAreNotArchived(menuItems map[RestaurantMenuItemUUID]MenuItem) error {
