@@ -42,6 +42,10 @@ func TestComponent_CriticalFlow(t *testing.T) {
 	order := placeOrderFromQuote(ctx, t, clients, customerUUID, restaurant.UUID, quote)
 	require.NotEmpty(t, order.OrderUuid)
 	assertOrderMatchesQuote(t, order, quote)
+
+	restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+
+	restaurantMarkOrderReady(ctx, t, clients, restaurant.UUID, order.OrderUuid)
 }
 
 func TestComponent_ListMenuItems(t *testing.T) {
@@ -250,6 +254,99 @@ func TestComponent_RegisterCourier_Validation(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+	})
+}
+
+func TestComponent_RestaurantAcceptAndPrepareOrder(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+
+	country := testutils.GenerateRandomCountry()
+
+	restaurant := onboardRestaurant(ctx, t, clients, country)
+
+	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+
+	// Create quote and place order
+	orderItems := []ordersclient.OrderItem{
+		{
+			MenuItemUuid: restaurant.Data.MenuItems[0].Uuid,
+			Quantity:     2,
+		},
+	}
+	deliveryAddress := testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City)
+	quote := createQuote(ctx, t, clients, customerUUID, restaurant.UUID, orderItems, deliveryAddress)
+
+	order := placeOrderFromQuote(ctx, t, clients, customerUUID, restaurant.UUID, quote)
+	require.NotEmpty(t, order.OrderUuid)
+	assertOrderMatchesQuote(t, order, quote)
+
+	// Restaurant accepts order
+	restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+
+	// Restaurant marks order as ready
+	restaurantMarkOrderReady(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+}
+
+func TestComponent_WrongRestaurantCannotManageOrder(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+
+	country := testutils.GenerateRandomCountry()
+
+	restaurant := onboardRestaurant(ctx, t, clients, country)
+
+	// Onboard a second restaurant (the "wrong" one)
+	wrongRestaurant := onboardRestaurant(ctx, t, clients, country)
+
+	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+
+	// Create quote and place order for the first restaurant
+	orderItems := []ordersclient.OrderItem{
+		{
+			MenuItemUuid: restaurant.Data.MenuItems[0].Uuid,
+			Quantity:     1,
+		},
+	}
+	deliveryAddress := testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City)
+	quote := createQuote(ctx, t, clients, customerUUID, restaurant.UUID, orderItems, deliveryAddress)
+	order := placeOrderFromQuote(ctx, t, clients, customerUUID, restaurant.UUID, quote)
+
+	t.Run("wrong_restaurant_cannot_accept_order", func(t *testing.T) {
+		resp, err := clients.Orders.RestaurantAcceptOrderWithResponse(
+			ctx,
+			&ordersclient.RestaurantAcceptOrderParams{
+				RestaurantUUID: wrongRestaurant.UUID,
+			},
+			ordersclient.AcceptOrder{
+				OrderUuid: order.OrderUuid,
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusForbidden, resp.StatusCode(),
+			"wrong restaurant should not be able to accept the order")
+	})
+
+	t.Run("wrong_restaurant_cannot_mark_order_ready", func(t *testing.T) {
+		// First let the correct restaurant accept the order
+		restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+
+		resp, err := clients.Orders.RestaurantMarkOrderReadyForPickupWithResponse(
+			ctx,
+			&ordersclient.RestaurantMarkOrderReadyForPickupParams{
+				RestaurantUUID: wrongRestaurant.UUID,
+			},
+			ordersclient.MarkOrderReady{
+				OrderUuid: order.OrderUuid,
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusForbidden, resp.StatusCode(),
+			"wrong restaurant should not be able to mark the order as ready")
 	})
 }
 

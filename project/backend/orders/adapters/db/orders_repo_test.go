@@ -6,6 +6,8 @@ package db_test
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -171,7 +173,7 @@ func TestCreateQuote(t *testing.T) {
 	}
 }
 
-func TestQuoteWithMenuItems(t *testing.T) {
+func TestPlaceOrder(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -181,33 +183,134 @@ func TestQuoteWithMenuItems(t *testing.T) {
 	customerRepo := db.NewCustomerRepository(dbPool)
 
 	// Setup: Create restaurant and quote
-	_, quote, quoteMenuItems := setupRestaurantAndQuote(t, ctx, restaurantRepo, ordersRepo, customerRepo)
+	restaurantUUID, quote, quoteMenuItems := setupRestaurantAndQuote(t, ctx, restaurantRepo, ordersRepo, customerRepo)
 
-	// Fetch quote with menu items from the repository
+	// Fetch quote with menu items
 	fetchedQuote, menuItems, err := ordersRepo.QuoteWithMenuItems(ctx, quote.QuoteUUID)
 	require.NoError(t, err)
+	assert.Equal(t, quote.QuoteUUID, fetchedQuote.QuoteUUID)
+	assert.Equal(t, quote.CustomerUUID, fetchedQuote.CustomerUUID)
+	assert.Equal(t, restaurantUUID, fetchedQuote.RestaurantUUID)
+	require.Len(t, menuItems, len(quoteMenuItems))
 
-	// Verify the quote matches
+	// Create and save order from quote
+	order, err := app.NewOrderFromQuote(fetchedQuote)
+	require.NoError(t, err)
+
+	err = ordersRepo.SaveOrder(ctx, order)
+	require.NoError(t, err)
+
+	// Verify order was created by fetching it
+	fetchedOrder, err := ordersRepo.OrderByID(ctx, order.OrderUUID)
+	require.NoError(t, err)
+
 	if diff := cmp.Diff(
-		quote,
-		fetchedQuote,
+		order,
+		fetchedOrder,
 		cmpopts.EquateComparable(shared.SharedTypes...),
 		cmp.Comparer(func(a, b time.Time) bool {
 			return a.Truncate(time.Second).Equal(b.Truncate(time.Second))
 		}),
 	); diff != "" {
-		t.Errorf("quote mismatch (-want +got):\n%s", diff)
-	}
-
-	// Verify menu items are returned
-	require.Len(t, menuItems, len(quoteMenuItems))
-	for _, qmi := range quoteMenuItems {
-		_, ok := menuItems[qmi.MenuItemUUID]
-		assert.True(t, ok, "menu item %s not found in returned items", qmi.MenuItemUUID)
+		t.Errorf("order mismatch (-want +got):\n%s", diff)
 	}
 }
 
-func TestSaveOrder(t *testing.T) {
+func TestOrderByID_NotFound(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPool := testutils.NewDB(t)
+	ordersRepo := db.NewOrdersRepository(dbPool)
+
+	// Try to get non-existent order
+	nonExistentUUID := app.OrderUUID{common.NewUUIDv7()}
+	_, err := ordersRepo.OrderByID(ctx, nonExistentUUID)
+	require.Error(t, err)
+
+	// Verify it's a NotFoundError from common
+	var commonErr common.Error
+	require.True(t, errors.As(err, &commonErr))
+	assert.Equal(t, http.StatusNotFound, commonErr.HttpErrorCode)
+	assert.Equal(t, "order_not_found", commonErr.ErrorSlug)
+}
+
+func TestUpdateOrder(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPool := testutils.NewDB(t)
+	ordersRepo := db.NewOrdersRepository(dbPool)
+	restaurantRepo := db.NewRestaurantRepository(dbPool)
+	customerRepo := db.NewCustomerRepository(dbPool)
+	courierRepo := db.NewCourierRepository(dbPool)
+
+	// Setup: Create restaurant, quote, and order
+	_, _, originalOrder := setupRestaurantQuoteAndOrder(t, ctx, restaurantRepo, ordersRepo, customerRepo)
+
+	// Create a courier
+	courierUUID := app.CourierUUID{common.NewUUIDv7()}
+	courier := newTestCourier()
+	err := courierRepo.RegisterCourier(ctx, courierUUID, courier)
+	require.NoError(t, err)
+
+	// Update order - add courier and all timestamps
+	confirmedAt := time.Now()
+	acceptedAt := time.Now().Add(5 * time.Minute)
+	preparedAt := time.Now().Add(10 * time.Minute)
+	pickedUpAt := time.Now().Add(15 * time.Minute)
+	deliveredAt := time.Now().Add(30 * time.Minute)
+
+	var expectedOrder app.Order
+	err = ordersRepo.UpdateOrder(ctx, originalOrder.OrderUUID, func(ctx context.Context, order app.Order) (app.Order, error) {
+		// Verify order state
+		assert.Equal(t, originalOrder.OrderUUID, order.OrderUUID)
+		assert.Nil(t, order.RestaurantConfirmedAt)
+		assert.Nil(t, order.CourierAcceptedAt)
+
+		// Update order using struct without named fields to ensure that when new fields are added,
+		// the compiler will force us to update this test.
+		expectedOrder = app.Order{
+			order.OrderUUID,
+			order.QuoteUUID,
+			order.CustomerUUID,
+			order.RestaurantUUID,
+			&courierUUID,
+			order.DeliveryAddress,
+			order.OrderedAt,
+			&confirmedAt,
+			&acceptedAt,
+			&preparedAt,
+			&pickedUpAt,
+			&deliveredAt,
+			order.ItemsSubtotal,
+			order.ServiceFeeGross,
+			order.DeliveryFeeGross,
+			order.TotalAmountGross,
+			order.TotalTax,
+			order.Currency,
+		}
+		return expectedOrder, nil
+	})
+	require.NoError(t, err)
+
+	// Verify all fields were updated correctly
+	updatedOrder, err := ordersRepo.OrderByID(ctx, originalOrder.OrderUUID)
+	require.NoError(t, err)
+
+	if diff := cmp.Diff(
+		expectedOrder,
+		updatedOrder,
+		cmpopts.EquateComparable(shared.SharedTypes...),
+		cmp.Comparer(func(a, b time.Time) bool {
+			return a.Truncate(time.Second).Equal(b.Truncate(time.Second))
+		}),
+	); diff != "" {
+		t.Errorf("order mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestUpdateOrder_Idempotency(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -216,16 +319,26 @@ func TestSaveOrder(t *testing.T) {
 	restaurantRepo := db.NewRestaurantRepository(dbPool)
 	customerRepo := db.NewCustomerRepository(dbPool)
 
-	// Setup: Create restaurant and quote
-	_, quote, _ := setupRestaurantAndQuote(t, ctx, restaurantRepo, ordersRepo, customerRepo)
+	// Setup: Create restaurant, quote, and order
+	_, _, order := setupRestaurantQuoteAndOrder(t, ctx, restaurantRepo, ordersRepo, customerRepo)
 
-	// Create order from quote
-	order, err := app.NewOrderFromQuote(quote)
+	// Update order multiple times with same data
+	confirmedAt := time.Now()
+
+	for i := 0; i < 3; i++ {
+		err := ordersRepo.UpdateOrder(ctx, order.OrderUUID, func(ctx context.Context, order app.Order) (app.Order, error) {
+			order.RestaurantConfirmedAt = &confirmedAt
+			return order, nil
+		})
+		require.NoError(t, err)
+	}
+
+	// Verify order state is consistent
+	fetchedOrder, err := ordersRepo.OrderByID(ctx, order.OrderUUID)
 	require.NoError(t, err)
 
-	// Save order
-	err = ordersRepo.SaveOrder(ctx, order)
-	require.NoError(t, err)
+	assert.NotNil(t, fetchedOrder.RestaurantConfirmedAt)
+	assert.True(t, fetchedOrder.RestaurantConfirmedAt.Truncate(time.Second).Equal(confirmedAt.Truncate(time.Second)))
 }
 
 func setupRestaurantAndQuote(t *testing.T, ctx context.Context, restaurantRepo *db.RestaurantRepository, ordersRepo *db.OrdersRepo, customerRepo *db.CustomerRepository) (app.RestaurantUUID, app.Quote, []app.CreateQuoteItem) {
@@ -287,4 +400,16 @@ func setupRestaurantAndQuote(t *testing.T, ctx context.Context, restaurantRepo *
 	require.NoError(t, err)
 
 	return restaurantUUID, quote, quoteMenuItems
+}
+
+func setupRestaurantQuoteAndOrder(t *testing.T, ctx context.Context, restaurantRepo *db.RestaurantRepository, ordersRepo *db.OrdersRepo, customerRepo *db.CustomerRepository) (app.RestaurantUUID, app.Quote, app.Order) {
+	restaurantUUID, quote, _ := setupRestaurantAndQuote(t, ctx, restaurantRepo, ordersRepo, customerRepo)
+
+	order, err := app.NewOrderFromQuote(quote)
+	require.NoError(t, err)
+
+	err = ordersRepo.SaveOrder(ctx, order)
+	require.NoError(t, err)
+
+	return restaurantUUID, quote, order
 }
