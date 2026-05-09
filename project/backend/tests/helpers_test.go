@@ -62,7 +62,7 @@ func onboardRestaurant(
 		Description: gofakeit.HipsterSentence(),
 		MenuItems:   menuItems,
 		Name:        cases.Title(language.Und).String(name),
-		Currency:    generateRandomCurrency(),
+		Currency:    currencyForCountry(t, country),
 	}
 
 	restaurantUUID := app.RestaurantUUID{common.NewUUIDv7()}
@@ -148,7 +148,64 @@ func registerCourierInCity(
 	}
 }
 
+func restaurantAcceptOrder(ctx context.Context, t *testing.T, clients testClients, restaurantUUID app.RestaurantUUID, orderUUID app.OrderUUID) {
+	t.Helper()
+
+	resp, err := clients.Orders.RestaurantAcceptOrderWithResponse(
+		ctx,
+		&ordersclient.RestaurantAcceptOrderParams{
+			RestaurantUUID: restaurantUUID,
+		},
+		ordersclient.AcceptOrder{
+			OrderUuid: orderUUID,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode())
+}
+
+func restaurantMarkOrderReady(ctx context.Context, t *testing.T, clients testClients, restaurantUUID app.RestaurantUUID, orderUUID app.OrderUUID) {
+	t.Helper()
+
+	resp, err := clients.Orders.RestaurantMarkOrderReadyForPickupWithResponse(
+		ctx,
+		&ordersclient.RestaurantMarkOrderReadyForPickupParams{
+			RestaurantUUID: restaurantUUID,
+		},
+		ordersclient.MarkOrderReady{
+			OrderUuid: orderUUID,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode())
+}
+
 func updateRestaurantMenu(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	restaurantUUID app.RestaurantUUID,
+	restaurant ordersclient.OnboardRestaurant,
+) {
+	t.Helper()
+
+	resp, err := clients.Orders.OnboardRestaurantWithResponse(
+		ctx,
+		restaurantUUID,
+		&ordersclient.OnboardRestaurantParams{
+			OperatorUUID: common.NewUUIDv7(),
+		},
+		restaurant,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode())
+}
+
+func randomPrice() decimal.Decimal {
+	return decimal.New(int64(rand.Intn(200)+50), -1)
+}
+
+func onboardRestaurantWithData(
 	ctx context.Context,
 	t *testing.T,
 	clients testClients,
@@ -268,20 +325,23 @@ func assertOrderMatchesQuote(t *testing.T, order *ordersclient.CustomerOrder, qu
 	)
 }
 
-func randomPrice() decimal.Decimal {
-	return decimal.New(int64(rand.Intn(200)+50), -1)
-}
-
-func generateRandomCurrency() shared.Currency {
-	supportedCurrencies := shared.CurrencyType("").Values()
-
-	currency := shared.Currency{}
-	err := currency.UnmarshalText([]byte(supportedCurrencies[rand.Intn(len(supportedCurrencies))]))
-	if err != nil {
-		panic(err)
+func currencyForCountry(t *testing.T, country shared.CountryCode) shared.Currency {
+	t.Helper()
+	switch country.Code() {
+	case "US":
+		return shared.MustNewCurrency("USD")
+	case "DE":
+		return shared.MustNewCurrency("EUR")
+	case "GB":
+		return shared.MustNewCurrency("GBP")
+	case "JP":
+		return shared.MustNewCurrency("JPY")
+	case "PL":
+		return shared.MustNewCurrency("PLN")
+	default:
+		t.Fatalf("unsupported country for currency mapping: %s", country.Code())
+		return shared.Currency{} // unreachable
 	}
-
-	return currency
 }
 
 func assertJsonReprEqual(t *testing.T, expected, actual any) {
@@ -374,7 +434,7 @@ func onboardRestaurantWithName(
 		Description: gofakeit.HipsterSentence(),
 		MenuItems:   menuItems,
 		Name:        name,
-		Currency:    generateRandomCurrency(),
+		Currency:    currencyForCountry(t, country),
 	}
 
 	restaurantUUID := app.RestaurantUUID{common.NewUUIDv7()}
@@ -417,7 +477,7 @@ func onboardRestaurantWithItems(
 		Description: gofakeit.HipsterSentence(),
 		MenuItems:   menuItems,
 		Name:        name,
-		Currency:    generateRandomCurrency(),
+		Currency:    currencyForCountry(t, country),
 	}
 
 	restaurantUUID := app.RestaurantUUID{common.NewUUIDv7()}

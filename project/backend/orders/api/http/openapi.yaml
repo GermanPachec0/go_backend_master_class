@@ -135,6 +135,68 @@ paths:
         '410':
           $ref: '#/components/responses/Gone'
 
+  /orders/restaurant/accept-order:
+    post:
+      summary: Restaurant accepts an order
+      operationId: restaurantAcceptOrder
+      tags:
+        - restaurant
+      parameters:
+        - name: Restaurant-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/RestaurantUUID'
+          description: Restaurant UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptOrder'
+      responses:
+        '202':
+          description: Order acceptance recorded
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /orders/restaurant/mark-order-ready-for-pickup:
+    post:
+      summary: Restaurant marks order as ready for pickup
+      operationId: restaurantMarkOrderReadyForPickup
+      tags:
+        - restaurant
+      parameters:
+        - name: Restaurant-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/RestaurantUUID'
+          description: Restaurant UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkOrderReady'
+      responses:
+        '202':
+          description: Order marked as ready
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /orders/restaurant/onboard/{restaurant_uuid}:
     put:
       summary: Onboard or replace a restaurant with full details
@@ -406,6 +468,30 @@ components:
           type: integer
           minimum: 1
           description: Quantity of the item
+
+    AcceptOrder:
+      type: object
+      required:
+        - order_uuid
+      properties:
+        order_uuid:
+          $ref: '#/components/schemas/OrderUUID'
+
+    ConfirmOrder:
+      type: object
+      required:
+        - order_uuid
+      properties:
+        order_uuid:
+          $ref: '#/components/schemas/OrderUUID'
+
+    MarkOrderReady:
+      type: object
+      required:
+        - order_uuid
+      properties:
+        order_uuid:
+          $ref: '#/components/schemas/OrderUUID'
 
     ReportDeliveryIssue:
       type: object
