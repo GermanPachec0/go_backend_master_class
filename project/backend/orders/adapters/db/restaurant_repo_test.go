@@ -35,6 +35,11 @@ func TestUpsertRestaurant_CreateNew(t *testing.T) {
 	err := repo.UpsertRestaurant(ctx, restaurantUUID, onboardRestaurant)
 	require.NoError(t, err)
 
+	// Verify restaurant was created
+	name, err := repo.RestaurantName(ctx, restaurantUUID)
+	require.NoError(t, err)
+	assert.Equal(t, onboardRestaurant.Name, name)
+
 	// Verify menu was created
 	menu, err := repo.GetRestaurantMenu(ctx, restaurantUUID)
 	require.NoError(t, err)
@@ -91,6 +96,10 @@ func TestUpsertRestaurant_UpdateExisting(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify restaurant was updated
+	name, err := repo.RestaurantName(ctx, restaurantUUID)
+	require.NoError(t, err)
+	assert.Equal(t, updatedRestaurant.Name, name)
+
 	menu, err := repo.GetRestaurantMenu(ctx, restaurantUUID)
 	require.NoError(t, err)
 
@@ -262,6 +271,26 @@ func TestUpsertRestaurant_Idempotency(t *testing.T) {
 	}
 
 	assert.Len(t, menu.Positions, len(onboardRestaurant.MenuItems))
+}
+
+func TestRestaurantName(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPool := testutils.NewDB(t)
+	repo := db.NewRestaurantRepository(dbPool)
+
+	restaurantUUID := app.RestaurantUUID{common.NewUUIDv7()}
+	onboardRestaurant := newTestOnboardRestaurant()
+
+	// Create restaurant
+	err := repo.UpsertRestaurant(ctx, restaurantUUID, onboardRestaurant)
+	require.NoError(t, err)
+
+	// Test RestaurantName method
+	name, err := repo.RestaurantName(ctx, restaurantUUID)
+	require.NoError(t, err)
+	assert.Equal(t, onboardRestaurant.Name, name)
 }
 
 func TestGetRestaurantMenu(t *testing.T) {

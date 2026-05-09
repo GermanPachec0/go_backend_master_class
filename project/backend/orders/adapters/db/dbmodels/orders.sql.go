@@ -15,6 +15,59 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const addOrder = `-- name: AddOrder :exec
+INSERT INTO orders.orders (
+	order_uuid,
+	quote_uuid,
+	customer_uuid,
+	restaurant_uuid,
+	delivery_address,
+	items_subtotal_gross,
+	service_fee_gross,
+	delivery_fee_gross,
+	total_amount_gross,
+	total_tax,
+	ordered_at,
+	currency
+)
+VALUES
+	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT (order_uuid) DO NOTHING
+`
+
+type AddOrderParams struct {
+	OrderUuid          app.OrderUUID
+	QuoteUuid          app.QuoteUUID
+	CustomerUuid       app.CustomerUUID
+	RestaurantUuid     app.RestaurantUUID
+	DeliveryAddress    shared.Address
+	ItemsSubtotalGross decimal.Decimal
+	ServiceFeeGross    decimal.Decimal
+	DeliveryFeeGross   decimal.Decimal
+	TotalAmountGross   decimal.Decimal
+	TotalTax           decimal.Decimal
+	OrderedAt          time.Time
+	Currency           shared.Currency
+}
+
+func (q *Queries) AddOrder(ctx context.Context, arg AddOrderParams) error {
+	_, err := q.db.Exec(ctx, addOrder,
+		arg.OrderUuid,
+		arg.QuoteUuid,
+		arg.CustomerUuid,
+		arg.RestaurantUuid,
+		arg.DeliveryAddress,
+		arg.ItemsSubtotalGross,
+		arg.ServiceFeeGross,
+		arg.DeliveryFeeGross,
+		arg.TotalAmountGross,
+		arg.TotalTax,
+		arg.OrderedAt,
+		arg.Currency,
+	)
+	return err
+}
+
 const addQuote = `-- name: AddQuote :exec
 INSERT INTO orders.quotes (
 	quote_uuid,
@@ -75,12 +128,16 @@ type AddQuoteItemsParams struct {
 
 const getMenuItemsForQuote = `-- name: GetMenuItemsForQuote :many
 SELECT
-	mi.restaurant_menu_item_uuid, mi.restaurant_uuid, mi.name, mi.gross_price, mi.ordering, mi.is_archived
-FROM orders.quote_items AS qi
-INNER JOIN  orders.restaurant_menu_items AS mi ON mi.restaurant_menu_item_uuid = qi.menu_item_uuid
-WHERE qi.quote_uuid = $1
+	restaurant_menu_items.restaurant_menu_item_uuid, restaurant_menu_items.restaurant_uuid, restaurant_menu_items.name, restaurant_menu_items.gross_price, restaurant_menu_items.ordering, restaurant_menu_items.is_archived
+FROM
+	orders.restaurant_menu_items AS restaurant_menu_items
+	INNER JOIN orders.quote_items AS quote_items
+	           ON restaurant_menu_items.restaurant_menu_item_uuid = quote_items.menu_item_uuid
+WHERE
+	quote_items.quote_uuid = $1
 `
 
+// Joining via quote_items avoids a separate query - one roundtrip instead of two.
 func (q *Queries) GetMenuItemsForQuote(ctx context.Context, quoteUuid app.QuoteUUID) ([]OrdersRestaurantMenuItem, error) {
 	rows, err := q.db.Query(ctx, getMenuItemsForQuote, quoteUuid)
 	if err != nil {
@@ -167,60 +224,4 @@ func (q *Queries) GetQuoteItems(ctx context.Context, quoteUuid app.QuoteUUID) ([
 		return nil, err
 	}
 	return items, nil
-}
-
-const insertOrder = `-- name: InsertOrder :exec
-INSERT INTO orders.orders (
-	order_uuid,
-	quote_uuid,
-	customer_uuid,
-	restaurant_uuid,
-	delivery_address,
-	ordered_at,
-	items_subtotal_gross,
-	service_fee_gross,
-	delivery_fee_gross,
-	total_amount_gross,
-	total_tax,
-	courier_uuid,
-	currency
-)
-VALUES
-	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING order_uuid, quote_uuid, customer_uuid, restaurant_uuid, courier_uuid, delivery_address, ordered_at, restaurant_confirmed_at, courier_accepted_at, restaurant_prepared_at, picked_up_at, delivered_at, items_subtotal_gross, service_fee_gross, delivery_fee_gross, total_amount_gross, total_tax, currency
-`
-
-type InsertOrderParams struct {
-	OrderUuid          app.OrderUUID
-	QuoteUuid          app.QuoteUUID
-	CustomerUuid       app.CustomerUUID
-	RestaurantUuid     app.RestaurantUUID
-	DeliveryAddress    shared.Address
-	OrderedAt          time.Time
-	ItemsSubtotalGross decimal.Decimal
-	ServiceFeeGross    decimal.Decimal
-	DeliveryFeeGross   decimal.Decimal
-	TotalAmountGross   decimal.Decimal
-	TotalTax           decimal.Decimal
-	CourierUuid        *app.CourierUUID
-	Currency           shared.Currency
-}
-
-func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) error {
-	_, err := q.db.Exec(ctx, insertOrder,
-		arg.OrderUuid,
-		arg.QuoteUuid,
-		arg.CustomerUuid,
-		arg.RestaurantUuid,
-		arg.DeliveryAddress,
-		arg.OrderedAt,
-		arg.ItemsSubtotalGross,
-		arg.ServiceFeeGross,
-		arg.DeliveryFeeGross,
-		arg.TotalAmountGross,
-		arg.TotalTax,
-		arg.CourierUuid,
-		arg.Currency,
-	)
-	return err
 }

@@ -11,8 +11,8 @@ import (
 // ListMenuItemsFilter contains optional filters for the menu items query.
 type ListMenuItemsFilter struct {
 	RestaurantName *string
-	OrderBy        *string
 	Search         *string
+	OrderBy        *string
 }
 
 // ReadModel is an interface for the read model that lists menu items.
@@ -21,16 +21,20 @@ type ReadModel interface {
 	ListMenuItemsWithRestaurant(ctx context.Context, filter ListMenuItemsFilter) ([]MenuItemWithRestaurant, error)
 }
 
+type RestaurantReader interface {
+	RestaurantName(ctx context.Context, restaurantUUID app.RestaurantUUID) (string, error)
+}
+
 type Handler struct {
-	service        *app.Service
-	restaurantRepo app.RestaurantRepository
-	readModel      ReadModel
+	service          *app.Service
+	readModel        ReadModel
+	restaurantReader RestaurantReader
 }
 
 func NewHandler(
 	service *app.Service,
-	restaurantRepository app.RestaurantRepository,
 	readModel ReadModel,
+	restaurantReader RestaurantReader,
 ) Handler {
 	if service == nil {
 		panic("service cannot be nil")
@@ -38,11 +42,14 @@ func NewHandler(
 	if readModel == nil {
 		panic("readModel cannot be nil")
 	}
+	if restaurantReader == nil {
+		panic("restaurant reader cannot be nil")
+	}
 
 	return Handler{
-		service:        service,
-		restaurantRepo: restaurantRepository,
-		readModel:      readModel,
+		service:          service,
+		readModel:        readModel,
+		restaurantReader: restaurantReader,
 	}
 }
 
@@ -52,7 +59,7 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 		return nil, common.NewInvalidInputError("invalid-address", "invalid address: %s", err)
 	}
 
-	customerUUID := CustomerUUID{UUID: common.NewUUIDv7()}
+	customerUUID := CustomerUUID{common.NewUUIDv7()}
 
 	err = h.service.RegisterCustomer(ctx, app.Customer{
 		CustomerUUID: customerUUID,
@@ -72,19 +79,21 @@ func (h Handler) RegisterCustomer(ctx context.Context, request RegisterCustomerR
 	}, nil
 }
 
-func openapiAddressToSharedAddress(addr Address) (shared.Address, error) {
-	sharedAddr, err := shared.NewAddress(
-		addr.Line1,
-		addr.Line2,
-		addr.PostalCode,
-		addr.City,
-		addr.CountryCode,
-	)
+func (h Handler) RegisterCourier(ctx context.Context, request RegisterCourierRequestObject) (RegisterCourierResponseObject, error) {
+	courierUUID, err := h.service.RegisterCourier(ctx, app.RegisterCourier{
+		Name:        request.Body.Name,
+		PhoneNumber: request.Body.PhoneNumber,
+		// city should be ideally normalized to ensure consistent city names
+		// across customers, restaurants, and delivery addresses
+		City: request.Body.City,
+	})
 	if err != nil {
-		return shared.Address{}, err
+		return nil, err
 	}
 
-	return sharedAddr, nil
+	return RegisterCourier201JSONResponse{
+		CourierUuid: courierUUID,
+	}, nil
 }
 
 func (h Handler) CustomerCreateQuote(ctx context.Context, request CustomerCreateQuoteRequestObject) (CustomerCreateQuoteResponseObject, error) {
@@ -106,10 +115,10 @@ func (h Handler) CustomerCreateQuote(ctx context.Context, request CustomerCreate
 	}
 
 	quote, err := h.service.CreateQuote(ctx, app.CreateQuote{
-		CustomerUUID:    request.Params.CustomerUUID,
-		RestaurantUUID:  request.Body.RestaurantUuid,
-		QuoteItems:      items,
-		DeliveryAddress: addr,
+		request.Params.CustomerUUID,
+		request.Body.RestaurantUuid,
+		items,
+		addr,
 	})
 	if err != nil {
 		return nil, err
@@ -125,6 +134,60 @@ func (h Handler) CustomerCreateQuote(ctx context.Context, request CustomerCreate
 		quote.TotalAmountGross,
 		quote.TotalTax,
 	}, nil
+}
+
+func (h Handler) CustomerPlaceOrder(ctx context.Context, request CustomerPlaceOrderRequestObject) (CustomerPlaceOrderResponseObject, error) {
+	if request.Params.CustomerUUID.IsZero() {
+		return nil, common.NewUnauthorizedError("missing-customer-uuid", "customer UUID is required")
+	}
+
+	order, err := h.service.PlaceOrder(ctx, app.PlaceOrder{
+		CustomerUUID: request.Params.CustomerUUID,
+		QuoteUUID:    request.Body.QuoteUuid,
+		PaymentNonce: request.Body.PaymentNonce,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	restaurantName, err := h.restaurantReader.RestaurantName(ctx, order.RestaurantUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	return appOrderToHttpOrder(order, restaurantName), nil
+}
+
+func sharedAddressToOpenapiAddress(addr shared.Address) Address {
+	return Address{
+		Line1:       addr.Line1,
+		Line2:       addr.Line2,
+		PostalCode:  addr.PostalCode,
+		City:        addr.City,
+		CountryCode: addr.CountryCode,
+	}
+}
+
+func appOrderToHttpOrder(order app.Order, restaurantName string) CustomerPlaceOrder201JSONResponse {
+	return CustomerPlaceOrder201JSONResponse{
+		order.CourierAcceptedAt,
+		order.CourierUUID,
+		order.Currency,
+		order.DeliveredAt,
+		sharedAddressToOpenapiAddress(order.DeliveryAddress),
+		order.DeliveryFeeGross,
+		order.ItemsSubtotal,
+		order.OrderUUID,
+		order.OrderedAt,
+		order.PickedUpAt,
+		order.RestaurantConfirmedAt,
+		restaurantName,
+		order.RestaurantPreparedAt,
+		order.RestaurantUUID,
+		order.ServiceFeeGross,
+		order.TotalAmountGross,
+		order.TotalTax,
+	}
 }
 
 func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestaurantRequestObject) (OnboardRestaurantResponseObject, error) {
@@ -151,11 +214,11 @@ func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestauran
 		ctx,
 		request.RestaurantUuid,
 		app.OnboardRestaurant{
-			Name:        request.Body.Name,
-			Address:     addr,
-			Currency:    request.Body.Currency,
-			Description: request.Body.Description,
-			MenuItems:   menuItems,
+			request.Body.Name,
+			addr,
+			request.Body.Currency,
+			request.Body.Description,
+			menuItems,
 		},
 	)
 	if err != nil {
@@ -165,8 +228,23 @@ func (h Handler) OnboardRestaurant(ctx context.Context, request OnboardRestauran
 	return OnboardRestaurant204Response{}, nil
 }
 
+func openapiAddressToSharedAddress(addr Address) (shared.Address, error) {
+	sharedAddr, err := shared.NewAddress(
+		addr.Line1,
+		addr.Line2,
+		addr.PostalCode,
+		addr.City,
+		addr.CountryCode,
+	)
+	if err != nil {
+		return shared.Address{}, err
+	}
+
+	return sharedAddr, nil
+}
+
 // ListMenuItems returns all active menu items with their restaurant information.
-// Supports optional filtering by restaurant name and ordering.
+// Supports optional filtering by restaurant name, full-text search, and ordering.
 func (h Handler) ListMenuItems(ctx context.Context, request ListMenuItemsRequestObject) (ListMenuItemsResponseObject, error) {
 	var orderBy *string
 	if request.Params.OrderBy != nil {
@@ -176,8 +254,8 @@ func (h Handler) ListMenuItems(ctx context.Context, request ListMenuItemsRequest
 
 	filter := ListMenuItemsFilter{
 		RestaurantName: request.Params.RestaurantName,
-		OrderBy:        orderBy,
 		Search:         request.Params.Search,
+		OrderBy:        orderBy,
 	}
 
 	items, err := h.readModel.ListMenuItemsWithRestaurant(ctx, filter)
@@ -186,55 +264,6 @@ func (h Handler) ListMenuItems(ctx context.Context, request ListMenuItemsRequest
 	}
 
 	return ListMenuItems200JSONResponse(items), nil
-}
-
-func (h Handler) CustomerPlaceOrder(ctx context.Context, request CustomerPlaceOrderRequestObject) (CustomerPlaceOrderResponseObject, error) {
-	if request.Params.CustomerUUID.IsZero() {
-		return nil, common.NewUnauthorizedError("missing-customer-uuid", "customer UUID is required")
-	}
-
-	order, err := h.service.PlaceOrder(ctx, request.Body.QuoteUuid, request.Body.PaymentNonce, request.Params.CustomerUUID)
-	if err != nil {
-		return nil, err
-	}
-
-	address := Address{
-		Line1:       order.DeliveryAddress.Line1,
-		Line2:       order.DeliveryAddress.Line2,
-		City:        order.DeliveryAddress.City,
-		CountryCode: order.DeliveryAddress.CountryCode,
-		PostalCode:  order.DeliveryAddress.PostalCode,
-	}
-	return CustomerPlaceOrder201JSONResponse{
-		CourierAcceptedAt:  order.CourierAcceptedAt,
-		CourierUuid:        order.CourierUUID,
-		Currency:           order.Currency,
-		DeliveryAddress:    address,
-		DeliveryFeeGross:   order.DeliveryFeeGross,
-		ItemsSubtotalGross: order.ItemsSubtotalGross,
-		OrderUuid:          order.OrderUUID,
-		RestaurantUuid:     order.RestaurantUUID,
-		ServiceFeeGross:    order.ServiceFeeGross,
-		TotalGross:         order.TotalAmountGross,
-		TotalTax:           order.TotalTax,
-	}, nil
-}
-
-func (h Handler) RegisterCourier(ctx context.Context, request RegisterCourierRequestObject) (RegisterCourierResponseObject, error) {
-	courierUUID := app.CourierUUID{UUID: common.NewUUIDv7()}
-	courierUUID, err := h.service.RegisterCourier(ctx, app.Courier{
-		CourierUUID: courierUUID,
-		Name:        request.Body.Name,
-		PhoneNumber: request.Body.PhoneNumber,
-		City:        request.Body.City,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return RegisterCourier201JSONResponse{
-		CourierUuid: courierUUID,
-	}, nil
 }
 
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {

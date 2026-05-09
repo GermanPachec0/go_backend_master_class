@@ -133,3 +133,14 @@ func (r *RestaurantRepository) GetRestaurantMenu(ctx context.Context, restaurant
 		Positions:      items,
 	}, nil
 }
+
+func (r *RestaurantRepository) RestaurantName(ctx context.Context, restaurantUUID app.RestaurantUUID) (string, error) {
+	queries := dbmodels.New(r.db)
+
+	restaurantName, err := queries.GetRestaurantName(ctx, restaurantUUID)
+	if err != nil {
+		return "", fmt.Errorf("get restaurant %s name failed: %w", restaurantUUID, err)
+	}
+
+	return restaurantName, nil
+}

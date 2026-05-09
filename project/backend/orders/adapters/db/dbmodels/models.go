@@ -14,7 +14,7 @@ import (
 )
 
 type OrdersCourier struct {
-	CourierUuid common.UUID
+	CourierUuid app.CourierUUID
 	Name        string
 	PhoneNumber string
 	City        string

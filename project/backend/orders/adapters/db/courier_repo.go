@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	pgx "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"eats/backend/common"
 	"eats/backend/orders/adapters/db/dbmodels"
 	"eats/backend/orders/app"
-
-	pgx "github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type CourierRepository struct {
@@ -17,15 +17,21 @@ type CourierRepository struct {
 }
 
 func NewCourierRepository(db *pgxpool.Pool) *CourierRepository {
-	return &CourierRepository{db: db}
+	if db == nil {
+		panic("db connection pool cannot be nil")
+	}
+
+	return &CourierRepository{
+		db: db,
+	}
 }
 
-func (r *CourierRepository) RegisterCourier(ctx context.Context, courier app.Courier) (app.CourierUUID, error) {
-	err := common.UpdateInTx(ctx, r.db, func(ctx context.Context, tx pgx.Tx) error {
+func (r *CourierRepository) RegisterCourier(ctx context.Context, courierUUID app.CourierUUID, courier app.RegisterCourier) error {
+	return common.UpdateInTx(ctx, r.db, func(ctx context.Context, tx pgx.Tx) error {
 		queries := dbmodels.New(tx)
 
 		err := queries.InsertCourier(ctx, dbmodels.InsertCourierParams{
-			CourierUuid: courier.CourierUUID.UUID,
+			CourierUuid: courierUUID,
 			Name:        courier.Name,
 			PhoneNumber: courier.PhoneNumber,
 			City:        courier.City,
@@ -36,8 +42,4 @@ func (r *CourierRepository) RegisterCourier(ctx context.Context, courier app.Cou
 
 		return nil
 	})
-	if err != nil {
-		return app.CourierUUID{}, err
-	}
-	return courier.CourierUUID, nil
 }

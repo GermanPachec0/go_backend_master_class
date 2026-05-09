@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,25 +12,6 @@ import (
 	"eats/backend/common/shared"
 	"eats/backend/delivery/api/module/client"
 )
-
-type OrderRepository interface {
-	CreateQuote(
-		ctx context.Context,
-		restaurantUUID RestaurantUUID,
-		menuItems CreateQuoteItems,
-		updateFn func(
-			ctx context.Context,
-			menuItems map[RestaurantMenuItemUUID]MenuItem,
-			restaurant Restaurant,
-		) (Quote, []QuoteMenuItem, error),
-	) (Quote, error)
-
-	GetRestaurant(ctx context.Context, restaurantUUID RestaurantUUID) (Restaurant, error)
-
-	GetQuote(ctx context.Context, quoteUUID QuoteUUID) (Quote, error)
-	GetMenuItemsForQuote(ctx context.Context, quoteUUID QuoteUUID) ([]MenuItem, error)
-	PlaceOrder(ctx context.Context, quote Quote) (Order, error)
-}
 
 type QuoteUUID struct {
 	common.UUID
@@ -53,31 +35,6 @@ type Quote struct {
 	CreatedAt time.Time
 }
 
-type OrderUUID struct {
-	common.UUID
-}
-
-type Order struct {
-	OrderUUID             OrderUUID
-	QuoteUUID             QuoteUUID
-	CustomerUUID          CustomerUUID
-	RestaurantUUID        RestaurantUUID
-	CourierUUID           *CourierUUID
-	DeliveryAddress       shared.Address
-	OrderedAt             time.Time
-	RestaurantConfirmedAt *time.Time
-	CourierAcceptedAt     *time.Time
-	RestaurantPreparedAt  *time.Time
-	PickedUpAt            *time.Time
-	DeliveredAt           *time.Time
-	ItemsSubtotalGross    decimal.Decimal
-	ServiceFeeGross       decimal.Decimal
-	DeliveryFeeGross      decimal.Decimal
-	TotalAmountGross      decimal.Decimal
-	TotalTax              decimal.Decimal
-	Currency              shared.Currency
-}
-
 func (c Quote) Expired() bool {
 	return time.Now().After(c.ExpirationTime())
 }
@@ -91,6 +48,116 @@ type QuoteMenuItem struct {
 
 	GrossPrice decimal.Decimal
 	Quantity   int
+}
+
+type OrderUUID struct {
+	common.UUID
+}
+
+func NewOrderFromQuote(quote Quote) (Order, error) {
+	var err error
+
+	if quote.QuoteUUID.IsZero() {
+		err = errors.Join(err, fmt.Errorf("quote UUID cannot be empty"))
+	}
+	if quote.CustomerUUID.IsZero() {
+		err = errors.Join(err, fmt.Errorf("customer UUID cannot be empty"))
+	}
+	if quote.RestaurantUUID.IsZero() {
+		err = errors.Join(err, fmt.Errorf("restaurant UUID cannot be empty"))
+	}
+	if quote.DeliveryAddress.IsZero() {
+		err = errors.Join(err, fmt.Errorf("delivery address cannot be empty"))
+	}
+	if quote.ServiceFeeGross.IsZero() {
+		err = errors.Join(err, fmt.Errorf("service fee cannot be zero"))
+	}
+	if quote.TotalAmountGross.IsZero() {
+		err = errors.Join(err, fmt.Errorf("total amount cannot be zero"))
+	}
+	if quote.ItemsSubtotalGross.IsZero() {
+		err = errors.Join(err, fmt.Errorf("items subtotal gross cannot be zero"))
+	}
+	if quote.DeliveryFeeGross.IsZero() {
+		err = errors.Join(err, fmt.Errorf("delivery fee cannot be zero"))
+	}
+	// TotalTax may be zero for countries with 0% tax on food (e.g. GB).
+	if quote.Currency.IsZero() {
+		err = errors.Join(err, fmt.Errorf("currency cannot be empty"))
+	}
+	if err != nil {
+		// it's not common.NewInvalidInputError because it's internal error if any of these happens here
+		return Order{}, fmt.Errorf("invalid quote for creating order: %w", err)
+	}
+
+	return Order{
+		OrderUUID{common.NewUUIDv7()},
+		quote.QuoteUUID,
+		quote.CustomerUUID,
+		quote.RestaurantUUID,
+		nil,
+		quote.DeliveryAddress,
+		time.Now(),
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		quote.ItemsSubtotalGross,
+		quote.ServiceFeeGross,
+		quote.DeliveryFeeGross,
+		quote.TotalAmountGross,
+		quote.TotalTax,
+		quote.Currency,
+	}, nil
+}
+
+type Order struct {
+	OrderUUID OrderUUID
+	QuoteUUID QuoteUUID
+
+	CustomerUUID   CustomerUUID
+	RestaurantUUID RestaurantUUID
+	CourierUUID    *CourierUUID
+
+	DeliveryAddress shared.Address
+
+	OrderedAt             time.Time
+	RestaurantConfirmedAt *time.Time
+	CourierAcceptedAt     *time.Time
+	RestaurantPreparedAt  *time.Time
+	PickedUpAt            *time.Time
+	DeliveredAt           *time.Time
+
+	ItemsSubtotal    decimal.Decimal
+	ServiceFeeGross  decimal.Decimal
+	DeliveryFeeGross decimal.Decimal
+	TotalAmountGross decimal.Decimal
+	TotalTax         decimal.Decimal
+
+	Currency shared.Currency
+}
+
+type OrderRepository interface {
+	GetRestaurant(
+		ctx context.Context,
+		restaurantUUID RestaurantUUID,
+	) (Restaurant, error)
+
+	CreateQuote(
+		ctx context.Context,
+		restaurantUUID RestaurantUUID,
+		menuItems CreateQuoteItems,
+		updateFn func(
+			ctx context.Context,
+			menuItems map[RestaurantMenuItemUUID]MenuItem,
+			restaurant Restaurant,
+		) (Quote, []QuoteMenuItem, error),
+	) (Quote, error)
+
+	QuoteWithMenuItems(ctx context.Context, quoteUUID QuoteUUID) (Quote, map[RestaurantMenuItemUUID]MenuItem, error)
+
+	SaveOrder(ctx context.Context, order Order) error
 }
 
 type CreateQuote struct {
@@ -157,6 +224,11 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 			Quantity:     item.Quantity,
 		})
 	}
+
+	// Call the delivery and billing services before starting the transaction. If these ran inside
+	// the transaction, a slow response would hold a database connection the entire time. If
+	// other modules share the same database, exhausting the pool this way is a self-inflicted DDoS.
+	// In production, use a separate database user per module with its own connection limit.
 	restaurant, err := s.orderRepository.GetRestaurant(ctx, req.RestaurantUUID)
 	if err != nil {
 		return Quote{}, err
@@ -215,9 +287,7 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 
 			serviceFeeGross := itemsSubtotal.Mul(decimal.RequireFromString("0.06")).RoundBank(2) // 6%
 
-			deliveryFeeGross := deliveryFee.GrossFee
-
-			totalAmount := itemsSubtotal.Add(serviceFeeGross).Add(deliveryFeeGross)
+			totalAmount := itemsSubtotal.Add(serviceFeeGross).Add(deliveryFee.GrossFee)
 
 			return Quote{
 				QuoteUUID:      QuoteUUID{common.NewUUIDv7()},
@@ -228,7 +298,7 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 
 				ItemsSubtotalGross: itemsSubtotal,
 				ServiceFeeGross:    serviceFeeGross,
-				DeliveryFeeGross:   deliveryFeeGross,
+				DeliveryFeeGross:   deliveryFee.GrossFee,
 				TotalAmountGross:   totalAmount,
 
 				TotalTax: totalAmount.Div(decimal.RequireFromString("1.23")).RoundBank(2),
@@ -239,53 +309,58 @@ func (s *Service) CreateQuote(ctx context.Context, req CreateQuote) (Quote, erro
 	)
 }
 
-func (s *Service) GetRestaurant(ctx context.Context, restaurantUUID RestaurantUUID) (Restaurant, error) {
-	return s.orderRepository.GetRestaurant(ctx, restaurantUUID)
+type PlaceOrder struct {
+	CustomerUUID CustomerUUID
+	QuoteUUID    QuoteUUID
+	PaymentNonce string
 }
 
-func (s *Service) PlaceOrder(ctx context.Context, quoteUUID QuoteUUID, paymentNonce string, customerUUID CustomerUUID) (Order, error) {
-	// Get Quotes and the menu items
-	quote, err := s.orderRepository.GetQuote(ctx, quoteUUID)
+func (s *Service) PlaceOrder(ctx context.Context, req PlaceOrder) (Order, error) {
+	quote, menuItems, err := s.orderRepository.QuoteWithMenuItems(ctx, req.QuoteUUID)
 	if err != nil {
+		return Order{}, fmt.Errorf("error reading quote: %w", err)
+	}
+
+	if err := checkCustomerMatch(quote.CustomerUUID, req.CustomerUUID); err != nil {
 		return Order{}, err
 	}
-	// verify that the customers owns the quote
-	if quote.CustomerUUID != customerUUID {
-		return Order{}, common.NewForbiddenError(
-			"invalid-customer",
-			"customer does not own the quote",
-		)
-	}
-	// check that the quote is not expired
+
 	if quote.Expired() {
+		// Frontend should handle by requesting a new quote and retrying.
 		return Order{}, common.NewExpiredError(
 			"quote-expired",
 			"quote has expired",
 		)
 	}
 
-	menuItems, err := s.orderRepository.GetMenuItemsForQuote(ctx, quoteUUID)
+	if err := ensureQuoteItemsAreNotArchived(menuItems); err != nil {
+		return Order{}, err
+	}
+
+	order, err := NewOrderFromQuote(quote)
 	if err != nil {
-		return Order{}, err
-	}
-	restaurantMenuItems := make(map[RestaurantMenuItemUUID]MenuItem)
-	for _, item := range menuItems {
-		restaurantMenuItems[item.MenuItemUUID] = item
+		return Order{}, fmt.Errorf("error creating order from quote: %w", err)
 	}
 
-	if err := ensureQuoteItemsAreNotArchived(restaurantMenuItems); err != nil {
-		return Order{}, err
-	}
-
-	// capture payments
-
-	totalAmount := quote.TotalAmountGross
-	err = s.paymentClient.CapturePayment(ctx, paymentNonce, totalAmount, quote.RestaurantUUID.String())
+	// CapturePayment is called outside the transaction.
+	// CapturePayment is idempotent (nonce ensures single charge), so retrying the whole
+	// PlaceOrder is safe for the payment side.
+	//
+	// If CapturePayment succeeds but SaveOrder fails, the payment was captured but the order
+	// is not saved. A reconciliation process is needed to handle this edge case.
+	// An event-driven approach would be the proper solution. See https://threedots.tech/event-driven/
+	err = s.paymentsService.CapturePayment(ctx, req.PaymentNonce, quote.TotalAmountGross, quote.RestaurantUUID.String())
 	if err != nil {
-		return Order{}, err
+		return Order{}, fmt.Errorf("error charging card for order: %w", err)
 	}
-	// persist order
-	return s.orderRepository.PlaceOrder(ctx, quote)
+
+	// SaveOrder persists the order inside a transaction.
+	err = s.orderRepository.SaveOrder(ctx, order)
+	if err != nil {
+		return Order{}, fmt.Errorf("error saving order: %w", err)
+	}
+
+	return order, nil
 }
 
 func ensureQuoteItemsAreNotArchived(menuItems map[RestaurantMenuItemUUID]MenuItem) error {
@@ -311,7 +386,7 @@ func ensureQuoteItemsAreNotArchived(menuItems map[RestaurantMenuItemUUID]MenuIte
 	}
 
 	return common.NewExpiredError(
-		"archived-menu-position",
+		"unavailable-menu-items",
 		"one or more menu items are not available",
 	).WithInternalError(fmt.Errorf(
 		"archived menu items in order: %v",

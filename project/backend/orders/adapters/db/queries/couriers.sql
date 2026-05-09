@@ -3,8 +3,7 @@ INSERT INTO orders.couriers (
 	courier_uuid,
 	name,
 	phone_number,
-	city)   
+	city
+)
 VALUES
-	($1, $2, $3, $4)
-RETURNING courier_uuid
-;
+	($1, $2, $3, $4);

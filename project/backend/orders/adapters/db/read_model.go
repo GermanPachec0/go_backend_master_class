@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -21,31 +22,30 @@ func NewReadModel(db *pgxpool.Pool) *ReadModel {
 	return &ReadModel{db: db}
 }
 
-// TODO: Implement this method using sqlc to query menu items joined with restaurants.
-func (r ReadModel) ListMenuItemsWithRestaurant(ctx context.Context, params http.ListMenuItemsFilter) ([]http.MenuItemWithRestaurant, error) {
+func (r ReadModel) ListMenuItemsWithRestaurant(ctx context.Context, filter http.ListMenuItemsFilter) ([]http.MenuItemWithRestaurant, error) {
 	queries := dbmodels.New(r.db)
 
-	result, err := queries.ListMenuItems(ctx,
-		dbmodels.ListMenuItemsParams{
-			RestaurantNameFilter: params.RestaurantName,
-			OrderBy:              params.OrderBy,
-			SearchTerm:           params.Search,
-		},
-	)
+	rows, err := queries.ListMenuItemsWithRestaurant(ctx, dbmodels.ListMenuItemsWithRestaurantParams{
+		SearchTerm:           filter.Search,
+		RestaurantNameFilter: filter.RestaurantName,
+		OrderBy:              filter.OrderBy,
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to query menu items: %w", err)
 	}
-	var menuItemsWithRestaurant []http.MenuItemWithRestaurant
-	for _, item := range result {
-		menuItemsWithRestaurant = append(menuItemsWithRestaurant, http.MenuItemWithRestaurant{
-			MenuItemUuid:   item.MenuItemUuid,
-			MenuItemName:   item.MenuItemName,
-			GrossPrice:     item.GrossPrice,
-			RestaurantUuid: item.RestaurantUuid,
-			RestaurantName: item.RestaurantName,
-			Currency:       item.Currency,
+
+	// Map directly to HTTP response types - no domain objects needed for reads
+	items := make([]http.MenuItemWithRestaurant, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, http.MenuItemWithRestaurant{
+			MenuItemUuid:   row.MenuItemUuid,
+			MenuItemName:   row.MenuItemName,
+			GrossPrice:     row.GrossPrice,
+			Currency:       row.Currency,
+			RestaurantUuid: row.RestaurantUuid,
+			RestaurantName: row.RestaurantName,
 		})
 	}
 
-	return menuItemsWithRestaurant, nil
+	return items, nil
 }

@@ -9,13 +9,11 @@ import (
 
 	deliveryModule "eats/backend/delivery/api/module/client"
 	ordersModule "eats/backend/orders/api/module/client"
-	reviewModule "eats/backend/reviews/api/module/client"
 )
 
 type Contracts struct {
 	ordersModule.Orders
 	deliveryModule.Delivery
-	reviewModule.Review
 }
 
 func (c *Contracts) Verify() error {
