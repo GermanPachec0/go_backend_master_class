@@ -4,13 +4,20 @@ package tests_test
 
 import (
 	"context"
+	"encoding/json"
+	"math/rand"
 	"net/http"
 	"testing"
+	"time"
 
+	bank2 "github.com/ThreeDotsLabs/the-domain-engineer/clients/bank"
 	gofakeit "github.com/brianvoe/gofakeit/v7"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/shopspring/decimal"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	"eats/backend/common"
 	"eats/backend/common/shared"
@@ -19,27 +26,79 @@ import (
 	"eats/backend/orders/app"
 )
 
-func registerCourierInCity(
+type testRestaurant struct {
+	UUID app.RestaurantUUID
+	Data ordersclient.OnboardRestaurant
+}
+
+func onboardRestaurant(
 	ctx context.Context,
 	t *testing.T,
 	clients testClients,
 	country shared.CountryCode,
-	city string,
-) ordersclient.CourierUUID {
+) testRestaurant {
 	t.Helper()
 
-	courierToCreate := ordersclient.RegisterCourier{
-		Name:        gofakeit.Name(),
-		PhoneNumber: gofakeit.Phone(),
-		City:        city,
+	var menuItems []ordersclient.MenuItem
+	for i := 0; i < 5; i++ {
+		menuItems = append(menuItems, ordersclient.MenuItem{
+			Uuid:       app.RestaurantMenuItemUUID{common.NewUUIDv7()},
+			Name:       gofakeit.Lunch(),
+			GrossPrice: randomPrice(),
+			Ordering:   rand.Float32(),
+		})
 	}
 
-	resp, err := clients.Orders.RegisterCourierWithResponse(ctx, courierToCreate)
+	name := ""
+	if rand.Intn(2) == 0 {
+		name += gofakeit.FirstName() + "'s "
+	}
+	name += gofakeit.HipsterWord()
+
+	address := testutils.GenerateRandomOpenapiAddress(country)
+
+	restaurantToCreate := ordersclient.OnboardRestaurant{
+		Address:     address,
+		Description: gofakeit.HipsterSentence(),
+		MenuItems:   menuItems,
+		Name:        cases.Title(language.Und).String(name),
+		Currency:    generateRandomCurrency(),
+	}
+
+	restaurantUUID := app.RestaurantUUID{common.NewUUIDv7()}
+	resp, err := clients.Orders.OnboardRestaurantWithResponse(
+		ctx,
+		restaurantUUID,
+		&ordersclient.OnboardRestaurantParams{
+			OperatorUUID: common.NewUUIDv7(),
+		},
+		restaurantToCreate,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode())
+
+	return testRestaurant{
+		UUID: restaurantUUID,
+		Data: restaurantToCreate,
+	}
+}
+
+func registerCustomer(ctx context.Context, t *testing.T, clients testClients, country shared.CountryCode) ordersclient.CustomerUUID {
+	t.Helper()
+
+	customerToCreate := ordersclient.RegisterCustomer{
+		Name:        gofakeit.Name(),
+		Email:       openapi_types.Email(gofakeit.Email()),
+		Address:     testutils.GenerateRandomOpenapiAddress(country),
+		PhoneNumber: gofakeit.Phone(),
+	}
+
+	resp, err := clients.Orders.RegisterCustomerWithResponse(ctx, customerToCreate)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, resp.StatusCode())
 	require.NotNil(t, resp.JSON201)
 
-	return resp.JSON201.CourierUuid
+	return resp.JSON201.CustomerUuid
 }
 
 func registerCustomerInCity(ctx context.Context, t *testing.T, clients testClients, country shared.CountryCode, city string) ordersclient.CustomerUUID {
@@ -60,27 +119,43 @@ func registerCustomerInCity(ctx context.Context, t *testing.T, clients testClien
 	return resp.JSON201.CustomerUuid
 }
 
-func onboardRestaurant(ctx context.Context, t *testing.T, clients testClients, country shared.CountryCode, name string) (ordersclient.RestaurantUUID, []ordersclient.MenuItem) {
+type testCourier struct {
+	UUID ordersclient.CourierUUID
+}
+
+func registerCourierInCity(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	country shared.CountryCode,
+	city string,
+) testCourier {
 	t.Helper()
 
-	restaurantUUID := app.RestaurantUUID{UUID: common.NewUUIDv7()}
-
-	menuItems := []ordersclient.MenuItem{
-		{
-			Uuid:       app.RestaurantMenuItemUUID{UUID: common.NewUUIDv7()},
-			Name:       gofakeit.ProductName(),
-			GrossPrice: decimal.NewFromFloat(10.99),
-			Ordering:   1,
-		},
-		{
-			Uuid:       app.RestaurantMenuItemUUID{UUID: common.NewUUIDv7()},
-			Name:       gofakeit.ProductName(),
-			GrossPrice: decimal.NewFromFloat(15.50),
-			Ordering:   2,
-		},
+	courierToCreate := ordersclient.RegisterCourier{
+		Name:        gofakeit.Name(),
+		PhoneNumber: gofakeit.Phone(),
+		City:        city,
 	}
 
-	currency := shared.MustNewCurrency("USD")
+	resp, err := clients.Orders.RegisterCourierWithResponse(ctx, courierToCreate)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode())
+	require.NotNil(t, resp.JSON201)
+
+	return testCourier{
+		UUID: resp.JSON201.CourierUuid,
+	}
+}
+
+func updateRestaurantMenu(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	restaurantUUID app.RestaurantUUID,
+	restaurant ordersclient.OnboardRestaurant,
+) {
+	t.Helper()
 
 	resp, err := clients.Orders.OnboardRestaurantWithResponse(
 		ctx,
@@ -88,53 +163,274 @@ func onboardRestaurant(ctx context.Context, t *testing.T, clients testClients, c
 		&ordersclient.OnboardRestaurantParams{
 			OperatorUUID: common.NewUUIDv7(),
 		},
-		ordersclient.OnboardRestaurant{
-			Name:        name,
-			Address:     testutils.GenerateRandomOpenapiAddress(country),
-			Currency:    currency,
-			Description: gofakeit.Sentence(10),
-			MenuItems:   menuItems,
+		restaurant,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNoContent, resp.StatusCode())
+}
+
+func createQuote(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	customerUUID app.CustomerUUID,
+	restaurantUUID app.RestaurantUUID,
+	orderItems []ordersclient.OrderItem,
+	deliveryAddress ordersclient.Address,
+) *ordersclient.CreateQuoteResponse {
+	t.Helper()
+
+	createQuoteRequest := ordersclient.CreateQuoteRequest{
+		RestaurantUuid:  restaurantUUID,
+		Items:           orderItems,
+		DeliveryAddress: deliveryAddress,
+	}
+
+	resp, err := clients.Orders.CustomerCreateQuoteWithResponse(
+		ctx,
+		&ordersclient.CustomerCreateQuoteParams{
+			CustomerUUID: customerUUID,
 		},
+		createQuoteRequest,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode())
+	require.NotNil(t, resp.JSON201)
+
+	return resp.JSON201
+}
+
+func placeOrderFromQuote(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	customerUUID app.CustomerUUID,
+	restaurantUUID app.RestaurantUUID,
+	quote *ordersclient.CreateQuoteResponse,
+) *ordersclient.CustomerOrder {
+	t.Helper()
+
+	_, cardNumber := createBankAccountWithBalance(ctx, t, clients, decimal.NewFromInt(1000), common.NewUUIDv7().String())
+	createBankAccount(ctx, t, clients, restaurantUUID.String())
+	nonce := preauthPayment(ctx, t, clients, cardNumber, quote.TotalGross, quote.Currency.String(), quote.QuoteUuid.String())
+
+	placeOrderRequest := ordersclient.PlaceOrder{
+		QuoteUuid:    quote.QuoteUuid,
+		PaymentNonce: nonce,
+	}
+
+	resp, err := clients.Orders.CustomerPlaceOrderWithResponse(
+		ctx,
+		&ordersclient.CustomerPlaceOrderParams{
+			CustomerUUID: customerUUID,
+		},
+		placeOrderRequest,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode())
+	require.NotNil(t, resp.JSON201)
+
+	return resp.JSON201
+}
+
+func assertOrderMatchesQuote(t *testing.T, order *ordersclient.CustomerOrder, quote *ordersclient.CreateQuoteResponse) {
+	t.Helper()
+
+	assert.Equal(
+		t,
+		quote.ItemsSubtotalGross.String(),
+		order.ItemsSubtotalGross.String(),
+		"order items subtotal should match quote",
+	)
+	assert.Equal(
+		t,
+		quote.ServiceFeeGross.String(),
+		order.ServiceFeeGross.String(),
+		"order service fee should match quote",
+	)
+	assert.Equal(
+		t,
+		quote.DeliveryFeeGross.String(),
+		order.DeliveryFeeGross.String(),
+		"order delivery fee should match quote",
+	)
+	assert.Equal(
+		t,
+		quote.TotalGross.String(),
+		order.TotalGross.String(),
+		"order total gross should match quote",
+	)
+	assert.Equal(
+		t,
+		quote.TotalTax.String(),
+		order.TotalTax.String(),
+		"order total tax should match quote",
+	)
+}
+
+func randomPrice() decimal.Decimal {
+	return decimal.New(int64(rand.Intn(200)+50), -1)
+}
+
+func generateRandomCurrency() shared.Currency {
+	supportedCurrencies := shared.CurrencyType("").Values()
+
+	currency := shared.Currency{}
+	err := currency.UnmarshalText([]byte(supportedCurrencies[rand.Intn(len(supportedCurrencies))]))
+	if err != nil {
+		panic(err)
+	}
+
+	return currency
+}
+
+func assertJsonReprEqual(t *testing.T, expected, actual any) {
+	t.Helper()
+
+	expectedJSON, err := json.Marshal(expected)
+	require.NoError(t, err)
+
+	actualJSON, err := json.Marshal(actual)
+	require.NoError(t, err)
+
+	require.JSONEq(t, string(expectedJSON), string(actualJSON))
+}
+
+func createBankAccount(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	merchantID string,
+) (string, string) {
+	t.Helper()
+	return createBankAccountWithBalance(ctx, t, clients, decimal.Zero, merchantID)
+}
+
+func createBankAccountWithBalance(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	balance decimal.Decimal,
+	merchantID string,
+) (string, string) {
+	t.Helper()
+	resp, err := clients.CommonClients.Bank.CreateAccountWithResponse(ctx, bank2.CreateAccountJSONRequestBody{
+		InitialBalance: balance,
+		MerchantId:     merchantID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode())
+	require.NotNil(t, resp.JSON201)
+	require.NotNil(t, resp.JSON201.Card)
+	return resp.JSON201.AccountNumber, resp.JSON201.Card.CardNumber
+}
+
+func preauthPayment(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	cardNumber string,
+	amount decimal.Decimal,
+	currency string,
+	idempotencyKey string,
+) string {
+	paymentResp, err := clients.CommonClients.Bank.PreauthorizePaymentWithResponse(ctx, bank2.PreauthorizePaymentJSONRequestBody{
+		Amount:     amount,
+		CardNumber: cardNumber,
+		Currency:   currency,
+		Cvv:        "123",
+		ExpiryDate: openapi_types.Date{
+			Time: time.Date(2030, time.January, 1, 0, 0, 0, 0, time.UTC),
+		},
+		IdempotencyKey: idempotencyKey,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, paymentResp.StatusCode())
+
+	return paymentResp.JSON200.PaymentNonce
+}
+
+func onboardRestaurantWithName(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	country shared.CountryCode,
+	name string,
+) (app.RestaurantUUID, ordersclient.OnboardRestaurant) {
+	t.Helper()
+
+	var menuItems []ordersclient.MenuItem
+	for i := 0; i < 5; i++ {
+		menuItems = append(menuItems, ordersclient.MenuItem{
+			Uuid:       app.RestaurantMenuItemUUID{common.NewUUIDv7()},
+			Name:       gofakeit.Lunch(),
+			GrossPrice: randomPrice(),
+			Ordering:   rand.Float32(),
+		})
+	}
+
+	restaurantToCreate := ordersclient.OnboardRestaurant{
+		Address:     testutils.GenerateRandomOpenapiAddress(country),
+		Description: gofakeit.HipsterSentence(),
+		MenuItems:   menuItems,
+		Name:        name,
+		Currency:    generateRandomCurrency(),
+	}
+
+	restaurantUUID := app.RestaurantUUID{common.NewUUIDv7()}
+	resp, err := clients.Orders.OnboardRestaurantWithResponse(
+		ctx,
+		restaurantUUID,
+		&ordersclient.OnboardRestaurantParams{
+			OperatorUUID: common.NewUUIDv7(),
+		},
+		restaurantToCreate,
 	)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode())
 
-	return restaurantUUID, menuItems
+	return restaurantUUID, restaurantToCreate
 }
 
-func onboardRestaurantWithItems(ctx context.Context, t *testing.T, clients testClients, country shared.CountryCode, name string, itemNames []string) (ordersclient.RestaurantUUID, []ordersclient.MenuItem) {
+func onboardRestaurantWithItems(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	country shared.CountryCode,
+	name string,
+	itemNames []string,
+) (app.RestaurantUUID, ordersclient.OnboardRestaurant) {
 	t.Helper()
-
-	restaurantUUID := app.RestaurantUUID{UUID: common.NewUUIDv7()}
 
 	menuItems := make([]ordersclient.MenuItem, 0, len(itemNames))
 	for i, itemName := range itemNames {
 		menuItems = append(menuItems, ordersclient.MenuItem{
-			Uuid:       app.RestaurantMenuItemUUID{UUID: common.NewUUIDv7()},
+			Uuid:       app.RestaurantMenuItemUUID{common.NewUUIDv7()},
 			Name:       itemName,
 			GrossPrice: decimal.NewFromFloat(10.00 + float64(i)),
 			Ordering:   float32(i + 1),
 		})
 	}
 
-	currency := shared.MustNewCurrency("USD")
+	restaurantToCreate := ordersclient.OnboardRestaurant{
+		Address:     testutils.GenerateRandomOpenapiAddress(country),
+		Description: gofakeit.HipsterSentence(),
+		MenuItems:   menuItems,
+		Name:        name,
+		Currency:    generateRandomCurrency(),
+	}
 
+	restaurantUUID := app.RestaurantUUID{common.NewUUIDv7()}
 	resp, err := clients.Orders.OnboardRestaurantWithResponse(
 		ctx,
 		restaurantUUID,
 		&ordersclient.OnboardRestaurantParams{
 			OperatorUUID: common.NewUUIDv7(),
 		},
-		ordersclient.OnboardRestaurant{
-			Name:        name,
-			Address:     testutils.GenerateRandomOpenapiAddress(country),
-			Currency:    currency,
-			Description: gofakeit.Sentence(10),
-			MenuItems:   menuItems,
-		},
+		restaurantToCreate,
 	)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode())
 
-	return restaurantUUID, menuItems
+	return restaurantUUID, restaurantToCreate
 }

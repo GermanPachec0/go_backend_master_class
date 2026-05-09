@@ -3,13 +3,16 @@
 package tests_test
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"eats/backend/common"
 	"eats/backend/common/testutils"
 	ordersclient "eats/backend/orders/api/http/client"
 )
@@ -22,8 +25,23 @@ func TestComponent_CriticalFlow(t *testing.T) {
 
 	country := testutils.GenerateRandomCountry()
 
-	customerUUID := registerCustomerInCity(ctx, t, clients, country, "Some city")
-	assert.NotEmpty(t, customerUUID)
+	restaurant := onboardRestaurant(ctx, t, clients, country)
+
+	registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+
+	orderItems := []ordersclient.OrderItem{
+		{
+			MenuItemUuid: restaurant.Data.MenuItems[0].Uuid,
+			Quantity:     2,
+		},
+	}
+	deliveryAddress := testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City)
+	quote := createQuote(ctx, t, clients, customerUUID, restaurant.UUID, orderItems, deliveryAddress)
+
+	order := placeOrderFromQuote(ctx, t, clients, customerUUID, restaurant.UUID, quote)
+	require.NotEmpty(t, order.OrderUuid)
+	assertOrderMatchesQuote(t, order, quote)
 }
 
 func TestComponent_ListMenuItems(t *testing.T) {
@@ -34,9 +52,9 @@ func TestComponent_ListMenuItems(t *testing.T) {
 	country := testutils.GenerateRandomCountry()
 
 	// Onboard a restaurant with menu items
-	restaurantUUID, menuItems := onboardRestaurant(ctx, t, clients, country, "Test Restaurant")
+	restaurantUUID, restaurant := onboardRestaurantWithName(ctx, t, clients, country, "Test Restaurant")
 	require.NotEmpty(t, restaurantUUID)
-	require.NotEmpty(t, menuItems)
+	require.NotEmpty(t, restaurant.MenuItems)
 
 	// Call the read model endpoint (no filters)
 	resp, err := clients.Orders.ListMenuItemsWithResponse(ctx, nil)
@@ -48,7 +66,7 @@ func TestComponent_ListMenuItems(t *testing.T) {
 	items := *resp.JSON200
 	found := 0
 	for _, item := range items {
-		for _, expected := range menuItems {
+		for _, expected := range restaurant.MenuItems {
 			if item.MenuItemUuid == expected.Uuid {
 				assert.Equal(t, expected.Name, item.MenuItemName)
 				assert.Equal(t, "Test Restaurant", item.RestaurantName)
@@ -56,7 +74,7 @@ func TestComponent_ListMenuItems(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, len(menuItems), found, "all menu items should be returned by read model")
+	assert.Equal(t, len(restaurant.MenuItems), found, "all menu items should be returned by read model")
 }
 
 func TestComponent_ListMenuItems_WithFiltering(t *testing.T) {
@@ -67,8 +85,8 @@ func TestComponent_ListMenuItems_WithFiltering(t *testing.T) {
 	country := testutils.GenerateRandomCountry()
 
 	// Onboard two restaurants
-	_, _ = onboardRestaurant(ctx, t, clients, country, "Pizza Palace")
-	_, _ = onboardRestaurant(ctx, t, clients, country, "Burger Barn")
+	_, _ = onboardRestaurantWithName(ctx, t, clients, country, "Pizza Palace")
+	_, _ = onboardRestaurantWithName(ctx, t, clients, country, "Burger Barn")
 
 	// Filter by restaurant name
 	restaurantName := "Pizza"
@@ -94,7 +112,7 @@ func TestComponent_ListMenuItems_WithOrdering(t *testing.T) {
 	country := testutils.GenerateRandomCountry()
 
 	// Onboard a restaurant
-	_, _ = onboardRestaurant(ctx, t, clients, country, "Test Restaurant")
+	_, _ = onboardRestaurantWithName(ctx, t, clients, country, "Test Restaurant")
 
 	// Order by price ascending
 	orderBy := ordersclient.PriceAsc
@@ -194,8 +212,8 @@ func TestComponent_RegisterCourier(t *testing.T) {
 	city := testutils.GenerateRandomAddress(country).City
 
 	// Register a courier
-	courierUUID := registerCourierInCity(ctx, t, clients, country, city)
-	require.NotEmpty(t, courierUUID)
+	courier := registerCourierInCity(ctx, t, clients, country, city)
+	require.NotEmpty(t, courier.UUID)
 }
 
 func TestComponent_RegisterCourier_Validation(t *testing.T) {
@@ -232,5 +250,265 @@ func TestComponent_RegisterCourier_Validation(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+	})
+}
+
+func TestComponent_PlaceOrder(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+
+	country := testutils.GenerateRandomCountry()
+
+	restaurant := onboardRestaurant(ctx, t, clients, country)
+
+	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+
+	// Create quote
+	orderItems := []ordersclient.OrderItem{
+		{
+			MenuItemUuid: restaurant.Data.MenuItems[0].Uuid,
+			Quantity:     2,
+		},
+	}
+	deliveryAddress := testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City)
+	quote := createQuote(ctx, t, clients, customerUUID, restaurant.UUID, orderItems, deliveryAddress)
+
+	// Place order
+	order := placeOrderFromQuote(ctx, t, clients, customerUUID, restaurant.UUID, quote)
+	require.NotEmpty(t, order.OrderUuid)
+	assertOrderMatchesQuote(t, order, quote)
+}
+
+func TestComponent_CreateQuoteOutOfDeliveryZone(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+
+	country := testutils.GenerateRandomCountry()
+
+	// Onboard restaurant in one city
+	restaurant := onboardRestaurant(ctx, t, clients, country)
+	customerUUID := registerCustomer(ctx, t, clients, country)
+
+	// Ensure the delivery city is different from restaurant city
+	deliveryAddress := testutils.GenerateRandomOpenapiAddress(country)
+	for deliveryAddress.City == restaurant.Data.Address.City {
+		deliveryAddress = testutils.GenerateRandomOpenapiAddress(country)
+	}
+
+	createQuoteRequest := ordersclient.CreateQuoteRequest{
+		RestaurantUuid: restaurant.UUID,
+		Items: []ordersclient.OrderItem{
+			{
+				MenuItemUuid: restaurant.Data.MenuItems[0].Uuid,
+				Quantity:     1,
+			},
+		},
+		DeliveryAddress: deliveryAddress,
+	}
+
+	resp, err := clients.Orders.CustomerCreateQuoteWithResponse(
+		ctx,
+		&ordersclient.CustomerCreateQuoteParams{
+			CustomerUUID: customerUUID,
+		},
+		createQuoteRequest,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+	require.NotNil(t, resp.JSON400)
+
+	expectedError := ordersclient.ErrorResponse{
+		Details: []ordersclient.ErrorDetails{
+			{
+				Message:    fmt.Sprintf("restaurant delivers to %s only", restaurant.Data.Address.City),
+				ErrorSlug:  "address-out-of-delivery-zone",
+				EntityType: common.ToPtr("quote"),
+			},
+		},
+		Message: "restaurant does not deliver to the provided address",
+		Slug:    "address-out-of-delivery-zone",
+	}
+
+	assertJsonReprEqual(t, expectedError, resp.JSON400)
+}
+
+func TestComponent_PlaceOrderWithArchivedItemFromQuote(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+
+	country := testutils.GenerateRandomCountry()
+
+	// Onboard restaurant with menu items
+	restaurant := onboardRestaurant(ctx, t, clients, country)
+	require.GreaterOrEqual(t, len(restaurant.Data.MenuItems), 3, "Need at least 3 menu items for this test")
+
+	// Create customer and quote with an item that will be archived
+	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+	itemToArchive := restaurant.Data.MenuItems[2]
+
+	orderItems := []ordersclient.OrderItem{
+		{
+			MenuItemUuid: itemToArchive.Uuid,
+			Quantity:     1,
+		},
+	}
+
+	quote := createQuote(ctx, t, clients, customerUUID, restaurant.UUID, orderItems, testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City))
+
+	// Archive the menu item after quote creation
+	updatedRestaurant := ordersclient.OnboardRestaurant{
+		Name:        restaurant.Data.Name,
+		Description: restaurant.Data.Description,
+		Address:     restaurant.Data.Address,
+		MenuItems:   restaurant.Data.MenuItems[:2], // Only keep first 2 items
+		Currency:    restaurant.Data.Currency,
+	}
+	updateRestaurantMenu(ctx, t, clients, restaurant.UUID, updatedRestaurant)
+
+	_, cardNumber := createBankAccountWithBalance(ctx, t, clients, decimal.NewFromInt(1000), common.NewUUIDv7().String())
+	createBankAccount(ctx, t, clients, restaurant.UUID.String())
+	nonce := preauthPayment(
+		ctx,
+		t,
+		clients,
+		cardNumber,
+		decimal.NewFromInt(100),
+		"USD",
+		quote.QuoteUuid.String(),
+	)
+
+	// Try to place order with quote containing archived item
+	placeOrderRequest := ordersclient.PlaceOrder{
+		QuoteUuid:    quote.QuoteUuid,
+		PaymentNonce: nonce,
+	}
+
+	resp, err := clients.Orders.CustomerPlaceOrderWithResponse(
+		ctx,
+		&ordersclient.CustomerPlaceOrderParams{
+			CustomerUUID: customerUUID,
+		},
+		placeOrderRequest,
+	)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		http.StatusGone,
+		resp.StatusCode(),
+	)
+	require.NotNil(t, resp.JSON410)
+
+	expectedErrors := []ordersclient.ErrorDetails{
+		{
+			Message:    fmt.Sprintf("menu position '%s' is archived", itemToArchive.Name),
+			ErrorSlug:  "archived-menu-position",
+			EntityType: common.ToPtr("menu_item"),
+			EntityId:   common.ToPtr(itemToArchive.Uuid.String()),
+		},
+	}
+
+	assertJsonReprEqual(t, expectedErrors, resp.JSON410.Details)
+}
+
+func TestComponent_CreateQuoteValidationErrors(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+
+	country := testutils.GenerateRandomCountry()
+
+	restaurant := onboardRestaurant(ctx, t, clients, country)
+	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+
+	t.Run("multiple_validation_errors_with_details", func(t *testing.T) {
+		t.Parallel()
+
+		// Create a request that triggers multiple validation errors:
+		// 1. Invalid quantity (with details)
+		// 2. Invalid delivery address
+		createQuoteRequest := ordersclient.CreateQuoteRequest{
+			RestaurantUuid: restaurant.UUID,
+			Items: []ordersclient.OrderItem{
+				{
+					MenuItemUuid: restaurant.Data.MenuItems[0].Uuid,
+					Quantity:     0, // Invalid: quantity must be > 0
+				},
+				{
+					MenuItemUuid: restaurant.Data.MenuItems[1].Uuid,
+					Quantity:     -5, // Invalid: quantity must be > 0
+				},
+			},
+			DeliveryAddress: testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City),
+		}
+
+		resp, err := clients.Orders.CustomerCreateQuoteWithResponse(
+			ctx,
+			&ordersclient.CustomerCreateQuoteParams{
+				CustomerUUID: customerUUID,
+			},
+			createQuoteRequest,
+		)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+		require.NotNil(t, resp.JSON400)
+
+		// Verify we have multiple errors in the response
+		errorResponse := resp.JSON400
+		require.NotNil(t, errorResponse.Details)
+		require.Len(t, errorResponse.Details, 2)
+
+		// Define expected errors
+		expectedErrors := []ordersclient.ErrorDetails{
+			{
+				Message:    "menu position quantity must be greater than zero",
+				ErrorSlug:  "invalid-quantity",
+				EntityId:   common.ToPtr(restaurant.Data.MenuItems[0].Uuid.String()),
+				EntityType: common.ToPtr("menu_item"),
+			},
+			{
+				Message:    "menu position quantity must be greater than zero",
+				ErrorSlug:  "invalid-quantity",
+				EntityId:   common.ToPtr(restaurant.Data.MenuItems[1].Uuid.String()),
+				EntityType: common.ToPtr("menu_item"),
+			},
+		}
+
+		assertJsonReprEqual(t, expectedErrors, errorResponse.Details)
+	})
+
+	t.Run("empty_order_validation_error", func(t *testing.T) {
+		t.Parallel()
+
+		// Create a request with empty items
+		createQuoteRequest := ordersclient.CreateQuoteRequest{
+			RestaurantUuid:  restaurant.UUID,
+			Items:           []ordersclient.OrderItem{}, // Empty order
+			DeliveryAddress: testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City),
+		}
+
+		resp, err := clients.Orders.CustomerCreateQuoteWithResponse(
+			ctx,
+			&ordersclient.CustomerCreateQuoteParams{
+				CustomerUUID: customerUUID,
+			},
+			createQuoteRequest,
+		)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+		require.NotNil(t, resp.JSON400)
+
+		errorResponse := resp.JSON400
+		require.NotNil(t, errorResponse.Details)
+		require.Len(t, errorResponse.Details, 1, "should have 1 validation error")
+
+		assert.Equal(t, "empty-order", errorResponse.Details[0].ErrorSlug)
+		assert.Contains(t, errorResponse.Details[0].Message, "at least one menu position")
 	})
 }
