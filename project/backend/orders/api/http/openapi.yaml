@@ -98,6 +98,43 @@ paths:
         '410':
           $ref: '#/components/responses/Gone'
 
+  /orders/customer/place-order:
+    post:
+      summary: Place a new order using an order offer
+      operationId: customerPlaceOrder
+      tags:
+        - customer
+      parameters:
+        - name: Customer-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/CustomerUUID'
+          description: Customer UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceOrder'
+      responses:
+        '201':
+          description: Order placed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerOrder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+
   /orders/restaurant/onboard/{restaurant_uuid}:
     put:
       summary: Onboard or replace a restaurant with full details
@@ -288,6 +325,75 @@ components:
         currency:
           $ref: '#/components/schemas/Currency'
 
+    PlaceOrder:
+      type: object
+      required:
+        - quote_uuid
+        - payment_nonce
+      properties:
+        quote_uuid:
+          $ref: '#/components/schemas/QuoteUUID'
+        payment_nonce:
+          type: string
+
+    CustomerOrder:
+      type: object
+      required:
+        - order_uuid
+        - restaurant_uuid
+        - restaurant_name
+        - delivery_address
+        - ordered_at
+        - items_subtotal_gross
+        - service_fee_gross
+        - delivery_fee_gross
+        - total_gross
+        - total_tax
+        - currency
+      properties:
+        order_uuid:
+          $ref: '#/components/schemas/OrderUUID'
+        restaurant_uuid:
+          $ref: '#/components/schemas/RestaurantUUID'
+        restaurant_name:
+          type: string
+        courier_uuid:
+          $ref: '#/components/schemas/CourierUUID'
+        delivery_address:
+          $ref: '#/components/schemas/Address'
+        ordered_at:
+          type: string
+          format: date-time
+          description: When the order was placed
+        restaurant_confirmed_at:
+          type: string
+          format: date-time
+        courier_accepted_at:
+          type: string
+          format: date-time
+        restaurant_prepared_at:
+          type: string
+          format: date-time
+        picked_up_at:
+          type: string
+          format: date-time
+        delivered_at:
+          type: string
+          format: date-time
+        items_subtotal_gross:
+          $ref: '#/components/schemas/Decimal'
+        service_fee_gross:
+          $ref: '#/components/schemas/Decimal'
+        delivery_fee_gross:
+          $ref: '#/components/schemas/Decimal'
+        total_gross:
+          $ref: '#/components/schemas/Decimal'
+        total_tax:
+          $ref: '#/components/schemas/Decimal'
+        currency:
+          $ref: '#/components/schemas/Currency'
+
+
     OrderItem:
       type: object
       required:
@@ -300,6 +406,18 @@ components:
           type: integer
           minimum: 1
           description: Quantity of the item
+
+    ReportDeliveryIssue:
+      type: object
+      required:
+        - order_uuid
+        - issue_description
+      properties:
+        order_uuid:
+          $ref: '#/components/schemas/OrderUUID'
+        issue_description:
+          type: string
+          description: Description of the delivery issue
 
     MenuItem:
       type: object
@@ -369,6 +487,14 @@ components:
           items:
             $ref: '#/components/schemas/MenuItem'
           description: Menu items for the restaurant
+
+    OrderUUID:
+      type: string
+      format: uuid
+      description: UUID of an order
+      x-go-type: app.OrderUUID
+      x-go-type-import:
+        path: eats/backend/orders/app
 
     QuoteUUID:
       type: string
