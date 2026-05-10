@@ -26,6 +26,7 @@ func TestComponent_CriticalFlow(t *testing.T) {
 	country := testutils.GenerateRandomCountry()
 
 	restaurant := onboardRestaurant(ctx, t, clients, country)
+	assertRestaurantMenuPublished(ctx, t, clients, restaurant.UUID, restaurant.Data)
 
 	courier := registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
 
@@ -273,6 +274,7 @@ func TestComponent_CourierDeliveryFlow(t *testing.T) {
 	country := testutils.GenerateRandomCountry()
 
 	restaurant := onboardRestaurant(ctx, t, clients, country)
+	assertRestaurantMenuPublished(ctx, t, clients, restaurant.UUID, restaurant.Data)
 
 	courier := registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
 	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
@@ -388,6 +390,7 @@ func TestComponent_WrongRestaurantCannotManageOrder(t *testing.T) {
 	country := testutils.GenerateRandomCountry()
 
 	restaurant := onboardRestaurant(ctx, t, clients, country)
+	assertRestaurantMenuPublished(ctx, t, clients, restaurant.UUID, restaurant.Data)
 
 	// Onboard a second restaurant (the "wrong" one)
 	wrongRestaurant := onboardRestaurant(ctx, t, clients, country)
@@ -448,6 +451,7 @@ func TestComponent_SecondCourierCannotAcceptSameOrder(t *testing.T) {
 	country := testutils.GenerateRandomCountry()
 
 	restaurant := onboardRestaurant(ctx, t, clients, country)
+	assertRestaurantMenuPublished(ctx, t, clients, restaurant.UUID, restaurant.Data)
 
 	courierA := registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
 	courierB := registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
@@ -487,6 +491,54 @@ func TestComponent_SecondCourierCannotAcceptSameOrder(t *testing.T) {
 	assert.Equal(t, "already-accepted", resp.JSON409.Slug)
 }
 
+func TestComponent_MenuItemArchival(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+
+	country := testutils.GenerateRandomCountry()
+
+	// Onboard restaurant with 5 menu items
+	originalRestaurant := onboardRestaurant(ctx, t, clients, country)
+
+	// Verify original menu has all items
+	require.GreaterOrEqual(t, len(originalRestaurant.Data.MenuItems), 3, "Need at least 3 menu items for this test")
+
+	assertRestaurantMenuPublished(ctx, t, clients, originalRestaurant.UUID, originalRestaurant.Data)
+
+	itemsToArchive := originalRestaurant.Data.MenuItems[2:]
+	itemsToKeep := originalRestaurant.Data.MenuItems[:2]
+
+	// Re-onboard the same restaurant with only first 2 menu items (excluding the rest)
+	updatedRestaurant := ordersclient.OnboardRestaurant{
+		Name:        originalRestaurant.Data.Name,
+		Description: originalRestaurant.Data.Description,
+		Address:     originalRestaurant.Data.Address,
+		MenuItems:   itemsToKeep,
+		Currency:    originalRestaurant.Data.Currency,
+	}
+
+	updateRestaurantMenu(ctx, t, clients, originalRestaurant.UUID, updatedRestaurant)
+
+	t.Run("archived_menu_items_not_in_menu", func(t *testing.T) {
+		t.Parallel()
+		assertMenuItemsEquals(ctx, t, clients, originalRestaurant.UUID, updatedRestaurant.MenuItems)
+	})
+
+	t.Run("archived_menu_items_not_in_menu", func(t *testing.T) {
+		t.Parallel()
+		assertArchivedMenuItemsNotInMenu(ctx, t, clients, originalRestaurant.UUID, itemsToArchive)
+	})
+
+	t.Run("initialize_order_with_archived_item_fails", func(t *testing.T) {
+		t.Parallel()
+
+		customerUUID := registerCustomerInCity(ctx, t, clients, country, originalRestaurant.Data.Address.City)
+		assertOrderWithArchivedItemFails(ctx, t, clients, customerUUID, originalRestaurant.UUID, itemsToArchive[0], country, originalRestaurant.Data.Address.City)
+	})
+}
+
 func TestComponent_PlaceOrder(t *testing.T) {
 	t.Parallel()
 	clients := newTestClients(t)
@@ -496,6 +548,7 @@ func TestComponent_PlaceOrder(t *testing.T) {
 	country := testutils.GenerateRandomCountry()
 
 	restaurant := onboardRestaurant(ctx, t, clients, country)
+	assertRestaurantMenuPublished(ctx, t, clients, restaurant.UUID, restaurant.Data)
 
 	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
 
@@ -581,6 +634,8 @@ func TestComponent_PlaceOrderWithArchivedItemFromQuote(t *testing.T) {
 	// Onboard restaurant with menu items
 	restaurant := onboardRestaurant(ctx, t, clients, country)
 	require.GreaterOrEqual(t, len(restaurant.Data.MenuItems), 3, "Need at least 3 menu items for this test")
+
+	assertRestaurantMenuPublished(ctx, t, clients, restaurant.UUID, restaurant.Data)
 
 	// Create customer and quote with an item that will be archived
 	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
