@@ -94,3 +94,11 @@ func NewExpiredError(slug, publicErrorFormat string, a ...any) Error {
 		ErrorSlug:     slug,
 	}
 }
+
+func NewConflictError(slug, publicErrorFormat string, a ...any) Error {
+	return Error{
+		HttpErrorCode: http.StatusConflict,
+		PublicError:   fmt.Sprintf(publicErrorFormat, a...),
+		ErrorSlug:     slug,
+	}
+}

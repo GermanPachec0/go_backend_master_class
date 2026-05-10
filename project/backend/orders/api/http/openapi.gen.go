@@ -30,6 +30,12 @@ const (
 	Relevance ListMenuItemsParamsOrderBy = "relevance"
 )
 
+// AcceptDelivery defines model for AcceptDelivery.
+type AcceptDelivery struct {
+	// OrderUuid UUID of an order
+	OrderUuid OrderUUID `json:"order_uuid"`
+}
+
 // AcceptOrder defines model for AcceptOrder.
 type AcceptOrder struct {
 	// OrderUuid UUID of an order
@@ -269,11 +275,26 @@ type RegisterCustomerResponse struct {
 	CustomerUuid CustomerUUID `json:"customer_uuid"`
 }
 
+// ReportDelivery defines model for ReportDelivery.
+type ReportDelivery struct {
+	// OrderUuid UUID of an order
+	OrderUuid OrderUUID `json:"order_uuid"`
+}
+
+// ReportPickup defines model for ReportPickup.
+type ReportPickup struct {
+	// OrderUuid UUID of an order
+	OrderUuid OrderUUID `json:"order_uuid"`
+}
+
 // RestaurantUUID UUID of a restaurant
 type RestaurantUUID = app.RestaurantUUID
 
 // BadRequest defines model for BadRequest.
 type BadRequest = ErrorResponse
+
+// Conflict defines model for Conflict.
+type Conflict = ErrorResponse
 
 // Forbidden defines model for Forbidden.
 type Forbidden = ErrorResponse
@@ -286,6 +307,24 @@ type NotFound = ErrorResponse
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = ErrorResponse
+
+// CourierAcceptDeliveryParams defines parameters for CourierAcceptDelivery.
+type CourierAcceptDeliveryParams struct {
+	// CourierUUID Courier UUID
+	CourierUUID CourierUUID `json:"Courier-UUID"`
+}
+
+// CourierReportDeliveryParams defines parameters for CourierReportDelivery.
+type CourierReportDeliveryParams struct {
+	// CourierUUID Courier UUID
+	CourierUUID CourierUUID `json:"Courier-UUID"`
+}
+
+// CourierReportPickupParams defines parameters for CourierReportPickup.
+type CourierReportPickupParams struct {
+	// CourierUUID Courier UUID
+	CourierUUID CourierUUID `json:"Courier-UUID"`
+}
 
 // CustomerCreateQuoteParams defines parameters for CustomerCreateQuote.
 type CustomerCreateQuoteParams struct {
@@ -331,6 +370,15 @@ type ListMenuItemsParams struct {
 // ListMenuItemsParamsOrderBy defines parameters for ListMenuItems.
 type ListMenuItemsParamsOrderBy string
 
+// CourierAcceptDeliveryJSONRequestBody defines body for CourierAcceptDelivery for application/json ContentType.
+type CourierAcceptDeliveryJSONRequestBody = AcceptDelivery
+
+// CourierReportDeliveryJSONRequestBody defines body for CourierReportDelivery for application/json ContentType.
+type CourierReportDeliveryJSONRequestBody = ReportDelivery
+
+// CourierReportPickupJSONRequestBody defines body for CourierReportPickup for application/json ContentType.
+type CourierReportPickupJSONRequestBody = ReportPickup
+
 // CustomerCreateQuoteJSONRequestBody defines body for CustomerCreateQuote for application/json ContentType.
 type CustomerCreateQuoteJSONRequestBody = CreateQuoteRequest
 
@@ -354,6 +402,15 @@ type OnboardRestaurantJSONRequestBody = OnboardRestaurant
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Courier accepts delivery job
+	// (POST /orders/courier/accept-delivery)
+	CourierAcceptDelivery(ctx echo.Context, params CourierAcceptDeliveryParams) error
+	// Courier reports successful delivery
+	// (POST /orders/courier/report-delivery)
+	CourierReportDelivery(ctx echo.Context, params CourierReportDeliveryParams) error
+	// Courier reports picking up an order
+	// (POST /orders/courier/report-pickup)
+	CourierReportPickup(ctx echo.Context, params CourierReportPickupParams) error
 	// Create order quote
 	// (POST /orders/customer/create-quote)
 	CustomerCreateQuote(ctx echo.Context, params CustomerCreateQuoteParams) error
@@ -383,6 +440,99 @@ type ServerInterface interface {
 // ServerInterfaceWrapper converts echo contexts to parameters.
 type ServerInterfaceWrapper struct {
 	Handler ServerInterface
+}
+
+// CourierAcceptDelivery converts echo context to params.
+func (w *ServerInterfaceWrapper) CourierAcceptDelivery(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CourierAcceptDeliveryParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Courier-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Courier-UUID")]; found {
+		var CourierUUID CourierUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Courier-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Courier-UUID", valueList[0], &CourierUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Courier-UUID: %s", err))
+		}
+
+		params.CourierUUID = CourierUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Courier-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.CourierAcceptDelivery(ctx, params)
+	return err
+}
+
+// CourierReportDelivery converts echo context to params.
+func (w *ServerInterfaceWrapper) CourierReportDelivery(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CourierReportDeliveryParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Courier-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Courier-UUID")]; found {
+		var CourierUUID CourierUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Courier-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Courier-UUID", valueList[0], &CourierUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Courier-UUID: %s", err))
+		}
+
+		params.CourierUUID = CourierUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Courier-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.CourierReportDelivery(ctx, params)
+	return err
+}
+
+// CourierReportPickup converts echo context to params.
+func (w *ServerInterfaceWrapper) CourierReportPickup(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CourierReportPickupParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Courier-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Courier-UUID")]; found {
+		var CourierUUID CourierUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Courier-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Courier-UUID", valueList[0], &CourierUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Courier-UUID: %s", err))
+		}
+
+		params.CourierUUID = CourierUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Courier-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.CourierReportPickup(ctx, params)
+	return err
 }
 
 // CustomerCreateQuote converts echo context to params.
@@ -625,6 +775,9 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 		Handler: si,
 	}
 
+	router.POST(baseURL+"/orders/courier/accept-delivery", wrapper.CourierAcceptDelivery)
+	router.POST(baseURL+"/orders/courier/report-delivery", wrapper.CourierReportDelivery)
+	router.POST(baseURL+"/orders/courier/report-pickup", wrapper.CourierReportPickup)
 	router.POST(baseURL+"/orders/customer/create-quote", wrapper.CustomerCreateQuote)
 	router.POST(baseURL+"/orders/customer/place-order", wrapper.CustomerPlaceOrder)
 	router.POST(baseURL+"/orders/register-courier", wrapper.RegisterCourier)
@@ -638,6 +791,8 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 
 type BadRequestJSONResponse ErrorResponse
 
+type ConflictJSONResponse ErrorResponse
+
 type ForbiddenJSONResponse ErrorResponse
 
 type GoneJSONResponse ErrorResponse
@@ -645,6 +800,174 @@ type GoneJSONResponse ErrorResponse
 type NotFoundJSONResponse ErrorResponse
 
 type UnauthorizedJSONResponse ErrorResponse
+
+type CourierAcceptDeliveryRequestObject struct {
+	Params CourierAcceptDeliveryParams
+	Body   *CourierAcceptDeliveryJSONRequestBody
+}
+
+type CourierAcceptDeliveryResponseObject interface {
+	VisitCourierAcceptDeliveryResponse(w http.ResponseWriter) error
+}
+
+type CourierAcceptDelivery202Response struct {
+}
+
+func (response CourierAcceptDelivery202Response) VisitCourierAcceptDeliveryResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type CourierAcceptDelivery400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CourierAcceptDelivery400JSONResponse) VisitCourierAcceptDeliveryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierAcceptDelivery401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CourierAcceptDelivery401JSONResponse) VisitCourierAcceptDeliveryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierAcceptDelivery403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response CourierAcceptDelivery403JSONResponse) VisitCourierAcceptDeliveryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierAcceptDelivery404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response CourierAcceptDelivery404JSONResponse) VisitCourierAcceptDeliveryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierAcceptDelivery409JSONResponse struct{ ConflictJSONResponse }
+
+func (response CourierAcceptDelivery409JSONResponse) VisitCourierAcceptDeliveryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierReportDeliveryRequestObject struct {
+	Params CourierReportDeliveryParams
+	Body   *CourierReportDeliveryJSONRequestBody
+}
+
+type CourierReportDeliveryResponseObject interface {
+	VisitCourierReportDeliveryResponse(w http.ResponseWriter) error
+}
+
+type CourierReportDelivery202Response struct {
+}
+
+func (response CourierReportDelivery202Response) VisitCourierReportDeliveryResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type CourierReportDelivery400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CourierReportDelivery400JSONResponse) VisitCourierReportDeliveryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierReportDelivery401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CourierReportDelivery401JSONResponse) VisitCourierReportDeliveryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierReportDelivery403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response CourierReportDelivery403JSONResponse) VisitCourierReportDeliveryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierReportDelivery404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response CourierReportDelivery404JSONResponse) VisitCourierReportDeliveryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierReportPickupRequestObject struct {
+	Params CourierReportPickupParams
+	Body   *CourierReportPickupJSONRequestBody
+}
+
+type CourierReportPickupResponseObject interface {
+	VisitCourierReportPickupResponse(w http.ResponseWriter) error
+}
+
+type CourierReportPickup202Response struct {
+}
+
+func (response CourierReportPickup202Response) VisitCourierReportPickupResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type CourierReportPickup400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CourierReportPickup400JSONResponse) VisitCourierReportPickupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierReportPickup401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CourierReportPickup401JSONResponse) VisitCourierReportPickupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierReportPickup403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response CourierReportPickup403JSONResponse) VisitCourierReportPickupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierReportPickup404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response CourierReportPickup404JSONResponse) VisitCourierReportPickupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
 
 type CustomerCreateQuoteRequestObject struct {
 	Params CustomerCreateQuoteParams
@@ -1003,6 +1326,15 @@ func (response ListMenuItems200JSONResponse) VisitListMenuItemsResponse(w http.R
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// Courier accepts delivery job
+	// (POST /orders/courier/accept-delivery)
+	CourierAcceptDelivery(ctx context.Context, request CourierAcceptDeliveryRequestObject) (CourierAcceptDeliveryResponseObject, error)
+	// Courier reports successful delivery
+	// (POST /orders/courier/report-delivery)
+	CourierReportDelivery(ctx context.Context, request CourierReportDeliveryRequestObject) (CourierReportDeliveryResponseObject, error)
+	// Courier reports picking up an order
+	// (POST /orders/courier/report-pickup)
+	CourierReportPickup(ctx context.Context, request CourierReportPickupRequestObject) (CourierReportPickupResponseObject, error)
 	// Create order quote
 	// (POST /orders/customer/create-quote)
 	CustomerCreateQuote(ctx context.Context, request CustomerCreateQuoteRequestObject) (CustomerCreateQuoteResponseObject, error)
@@ -1039,6 +1371,99 @@ func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareF
 type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
+}
+
+// CourierAcceptDelivery operation middleware
+func (sh *strictHandler) CourierAcceptDelivery(ctx echo.Context, params CourierAcceptDeliveryParams) error {
+	var request CourierAcceptDeliveryRequestObject
+
+	request.Params = params
+
+	var body CourierAcceptDeliveryJSONRequestBody
+	if err := ctx.Bind(&body); err != nil {
+		return err
+	}
+	request.Body = &body
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.CourierAcceptDelivery(ctx.Request().Context(), request.(CourierAcceptDeliveryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CourierAcceptDelivery")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(CourierAcceptDeliveryResponseObject); ok {
+		return validResponse.VisitCourierAcceptDeliveryResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// CourierReportDelivery operation middleware
+func (sh *strictHandler) CourierReportDelivery(ctx echo.Context, params CourierReportDeliveryParams) error {
+	var request CourierReportDeliveryRequestObject
+
+	request.Params = params
+
+	var body CourierReportDeliveryJSONRequestBody
+	if err := ctx.Bind(&body); err != nil {
+		return err
+	}
+	request.Body = &body
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.CourierReportDelivery(ctx.Request().Context(), request.(CourierReportDeliveryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CourierReportDelivery")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(CourierReportDeliveryResponseObject); ok {
+		return validResponse.VisitCourierReportDeliveryResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// CourierReportPickup operation middleware
+func (sh *strictHandler) CourierReportPickup(ctx echo.Context, params CourierReportPickupParams) error {
+	var request CourierReportPickupRequestObject
+
+	request.Params = params
+
+	var body CourierReportPickupJSONRequestBody
+	if err := ctx.Bind(&body); err != nil {
+		return err
+	}
+	request.Body = &body
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.CourierReportPickup(ctx.Request().Context(), request.(CourierReportPickupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CourierReportPickup")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(CourierReportPickupResponseObject); ok {
+		return validResponse.VisitCourierReportPickupResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
 }
 
 // CustomerCreateQuote operation middleware

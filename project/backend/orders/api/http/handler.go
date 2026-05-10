@@ -295,6 +295,45 @@ func (h Handler) RestaurantMarkOrderReadyForPickup(ctx context.Context, request 
 	return RestaurantMarkOrderReadyForPickup202Response{}, nil
 }
 
+func (h Handler) CourierAcceptDelivery(ctx context.Context, request CourierAcceptDeliveryRequestObject) (CourierAcceptDeliveryResponseObject, error) {
+	if request.Params.CourierUUID.IsZero() {
+		return nil, common.NewUnauthorizedError("missing-courier-uuid", "courier UUID is required")
+	}
+
+	err := h.service.AcceptDelivery(ctx, request.Params.CourierUUID, request.Body.OrderUuid)
+	if err != nil {
+		return nil, err
+	}
+
+	return CourierAcceptDelivery202Response{}, nil
+}
+
+func (h Handler) CourierReportPickup(ctx context.Context, request CourierReportPickupRequestObject) (CourierReportPickupResponseObject, error) {
+	if request.Params.CourierUUID.IsZero() {
+		return nil, common.NewUnauthorizedError("missing-courier-uuid", "courier UUID is required")
+	}
+
+	err := h.service.ReportPickup(ctx, request.Params.CourierUUID, request.Body.OrderUuid)
+	if err != nil {
+		return nil, err
+	}
+
+	return CourierReportPickup202Response{}, nil
+}
+
+func (h Handler) CourierReportDelivery(ctx context.Context, request CourierReportDeliveryRequestObject) (CourierReportDeliveryResponseObject, error) {
+	if request.Params.CourierUUID.IsZero() {
+		return nil, common.NewUnauthorizedError("missing-courier-uuid", "courier UUID is required")
+	}
+
+	err := h.service.ReportDelivery(ctx, request.Params.CourierUUID, request.Body.OrderUuid)
+	if err != nil {
+		return nil, err
+	}
+
+	return CourierReportDelivery202Response{}, nil
+}
+
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {
 	RegisterHandlers(e, NewStrictHandler(handler, nil))
 

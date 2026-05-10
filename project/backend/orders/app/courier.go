@@ -17,9 +17,16 @@ type RegisterCourier struct {
 	PhoneNumber string
 	City        string
 }
+type Courier struct {
+	CourierUUID CourierUUID
+	Name        string
+	PhoneNumber string
+	City        string
+}
 
 type CourierRepository interface {
 	RegisterCourier(ctx context.Context, courierUUID CourierUUID, courier RegisterCourier) error
+	GetCourier(ctx context.Context, courierUUID CourierUUID) (Courier, error)
 }
 
 func (s *Service) RegisterCourier(ctx context.Context, req RegisterCourier) (CourierUUID, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -378,7 +379,6 @@ func (s *Service) AcceptOrder(ctx context.Context,
 		ctx,
 		orderUuid,
 		func(ctx context.Context, order Order) (Order, error) {
-
 			// verify that restaurant owns the order
 			if order.RestaurantUUID != restaurantUUID {
 				return order, common.NewForbiddenError(
@@ -399,7 +399,8 @@ func (s *Service) AcceptOrder(ctx context.Context,
 func (s *Service) MarkOrderReadyForPickup(ctx context.Context,
 	orderUuid OrderUUID,
 	restaurantUUID RestaurantUUID,
-	readyForPickupAt time.Time) error {
+	readyForPickupAt time.Time,
+) error {
 	return s.orderRepository.UpdateOrder(
 		ctx,
 		orderUuid,
@@ -426,6 +427,91 @@ func (s *Service) MarkOrderReadyForPickup(ctx context.Context,
 
 			return order, nil
 		})
+}
+
+func (s *Service) AcceptDelivery(ctx context.Context,
+	courierUuid CourierUUID,
+	orderUuid OrderUUID,
+) error {
+	return s.orderRepository.UpdateOrder(ctx, orderUuid, func(ctx context.Context, order Order) (Order, error) {
+		// verify that the order is accepted by restaurant
+		if order.RestaurantConfirmedAt == nil {
+			return order, common.NewForbiddenError(
+				"order-not-confirmed",
+				"order must be confirmed by restaurant before courier can accept delivery",
+			)
+		}
+		// verify that the order is not already accepted by another courier
+		if order.CourierUUID != nil && *order.CourierUUID != courierUuid {
+			return Order{}, common.NewConflictError(
+				"already-accepted",
+				"order is already accepted by another courier",
+			)
+		}
+		courier, err := s.courierRepository.GetCourier(ctx, courierUuid)
+		if err != nil {
+			return order, err
+		}
+		// check if the courier is in the same city as the delivery address of the order
+		if order.DeliveryAddress.City != courier.City {
+			return order, common.NewInvalidInputError(
+				"courier-out-of-delivery-zone",
+				"courier cannot deliver to this order address",
+			).WithDetails([]common.ErrorDetails{{
+				EntityType: "order",
+				ErrorSlug:  "courier-out-of-delivery-zone",
+			}})
+		}
+		order.CourierUUID = &courierUuid
+		if order.CourierAcceptedAt == nil {
+			now := time.Now()
+			order.CourierAcceptedAt = &now
+		}
+
+		return order, nil
+	})
+}
+
+func (s *Service) ReportPickup(ctx context.Context, courierUuid CourierUUID, orderUuid OrderUUID) error {
+	return s.orderRepository.UpdateOrder(ctx, orderUuid, func(ctx context.Context, order Order) (Order, error) {
+		// verify that the courier accepted the delivery
+		if order.CourierUUID == nil || *order.CourierUUID != courierUuid {
+			return order, common.NewConflictError(
+				"invalid-courier",
+				"courier did not accept delivery for this order",
+			)
+		}
+		// verify that the order is not already marked as picked up
+		if order.PickedUpAt != nil {
+			slog.Info("picket date already set")
+			return order, nil
+		}
+		now := time.Now()
+		order.PickedUpAt = &now
+
+		return order, nil
+	})
+}
+
+func (s *Service) ReportDelivery(ctx context.Context, courierUuid CourierUUID, orderUuid OrderUUID) error {
+	return s.orderRepository.UpdateOrder(ctx, orderUuid, func(ctx context.Context, order Order) (Order, error) {
+		// verify that the courier accepted the delivery
+		if order.CourierUUID == nil || *order.CourierUUID != courierUuid {
+			return order, common.NewForbiddenError(
+				"invalid-courier",
+				"courier did not accept delivery for this order",
+			)
+		}
+		// verify that the order is not already marked as delivered
+		if order.DeliveredAt != nil {
+			slog.Info("delivery date already set")
+			return order, nil
+		}
+		now := time.Now()
+		order.DeliveredAt = &now
+
+		return order, nil
+	})
 }
 
 func (s *Service) GetOrder(ctx context.Context, orderUUID OrderUUID) (Order, error) {

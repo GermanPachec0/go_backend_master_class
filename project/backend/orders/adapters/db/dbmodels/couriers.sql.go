@@ -11,6 +11,28 @@ import (
 	"eats/backend/orders/app"
 )
 
+const getCourierByUUID = `-- name: GetCourierByUUID :one
+SELECT
+	courier_uuid,
+	name,
+	phone_number,
+	city
+FROM orders.couriers
+WHERE courier_uuid = $1
+`
+
+func (q *Queries) GetCourierByUUID(ctx context.Context, courierUuid app.CourierUUID) (OrdersCourier, error) {
+	row := q.db.QueryRow(ctx, getCourierByUUID, courierUuid)
+	var i OrdersCourier
+	err := row.Scan(
+		&i.CourierUuid,
+		&i.Name,
+		&i.PhoneNumber,
+		&i.City,
+	)
+	return i, err
+}
+
 const insertCourier = `-- name: InsertCourier :exec
 INSERT INTO orders.couriers (
 	courier_uuid,

@@ -43,3 +43,26 @@ func (r *CourierRepository) RegisterCourier(ctx context.Context, courierUUID app
 		return nil
 	})
 }
+
+func (r *CourierRepository) GetCourier(ctx context.Context, courierUUID app.CourierUUID) (app.Courier, error) {
+	db := dbmodels.New(r.db)
+
+	courier, err := db.GetCourierByUUID(ctx, courierUUID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return app.Courier{}, common.NewNotFoundError(
+				"courier_not_found",
+				"Courier with UUID %s not found",
+				courierUUID,
+			)
+		}
+		return app.Courier{}, fmt.Errorf("failed to get courier by uuid: %w", err)
+	}
+
+	return app.Courier{
+		CourierUUID: courier.CourierUuid,
+		Name:        courier.Name,
+		PhoneNumber: courier.PhoneNumber,
+		City:        courier.City,
+	}, nil
+}
