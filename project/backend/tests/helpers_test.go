@@ -164,6 +164,22 @@ func restaurantAcceptOrder(ctx context.Context, t *testing.T, clients testClient
 	require.Equal(t, http.StatusAccepted, resp.StatusCode())
 }
 
+func courierAcceptDelivery(ctx context.Context, t *testing.T, clients testClients, courierUUID app.CourierUUID, orderUUID app.OrderUUID) {
+	t.Helper()
+
+	resp, err := clients.Orders.CourierAcceptDeliveryWithResponse(
+		ctx,
+		&ordersclient.CourierAcceptDeliveryParams{
+			CourierUUID: courierUUID,
+		},
+		ordersclient.AcceptDelivery{
+			OrderUuid: orderUUID,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode())
+}
+
 func restaurantMarkOrderReady(ctx context.Context, t *testing.T, clients testClients, restaurantUUID app.RestaurantUUID, orderUUID app.OrderUUID) {
 	t.Helper()
 
@@ -173,6 +189,50 @@ func restaurantMarkOrderReady(ctx context.Context, t *testing.T, clients testCli
 			RestaurantUUID: restaurantUUID,
 		},
 		ordersclient.MarkOrderReady{
+			OrderUuid: orderUUID,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode())
+}
+
+func courierReportPickup(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	courierUUID app.CourierUUID,
+	orderUUID app.OrderUUID,
+) {
+	t.Helper()
+
+	resp, err := clients.Orders.CourierReportPickupWithResponse(
+		ctx,
+		&ordersclient.CourierReportPickupParams{
+			CourierUUID: courierUUID,
+		},
+		ordersclient.ReportPickup{
+			OrderUuid: orderUUID,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode())
+}
+
+func courierReportDelivered(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	courierUUID app.CourierUUID,
+	orderUUID app.OrderUUID,
+) {
+	t.Helper()
+
+	resp, err := clients.Orders.CourierReportDeliveryWithResponse(
+		ctx,
+		&ordersclient.CourierReportDeliveryParams{
+			CourierUUID: courierUUID,
+		},
+		ordersclient.ReportDelivery{
 			OrderUuid: orderUUID,
 		},
 	)

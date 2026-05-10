@@ -27,7 +27,8 @@ func TestComponent_CriticalFlow(t *testing.T) {
 
 	restaurant := onboardRestaurant(ctx, t, clients, country)
 
-	registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+	courier := registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+
 	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
 
 	orderItems := []ordersclient.OrderItem{
@@ -45,7 +46,13 @@ func TestComponent_CriticalFlow(t *testing.T) {
 
 	restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, order.OrderUuid)
 
+	courierAcceptDelivery(ctx, t, clients, courier.UUID, order.OrderUuid)
+
 	restaurantMarkOrderReady(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+
+	courierReportPickup(ctx, t, clients, courier.UUID, order.OrderUuid)
+
+	courierReportDelivered(ctx, t, clients, courier.UUID, order.OrderUuid)
 }
 
 func TestComponent_ListMenuItems(t *testing.T) {
@@ -257,7 +264,7 @@ func TestComponent_RegisterCourier_Validation(t *testing.T) {
 	})
 }
 
-func TestComponent_RestaurantAcceptAndPrepareOrder(t *testing.T) {
+func TestComponent_CourierDeliveryFlow(t *testing.T) {
 	t.Parallel()
 	clients := newTestClients(t)
 
@@ -267,6 +274,7 @@ func TestComponent_RestaurantAcceptAndPrepareOrder(t *testing.T) {
 
 	restaurant := onboardRestaurant(ctx, t, clients, country)
 
+	courier := registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
 	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
 
 	// Create quote and place order
@@ -286,8 +294,89 @@ func TestComponent_RestaurantAcceptAndPrepareOrder(t *testing.T) {
 	// Restaurant accepts order
 	restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, order.OrderUuid)
 
+	// Courier accepts delivery
+	courierAcceptDelivery(ctx, t, clients, courier.UUID, order.OrderUuid)
+
 	// Restaurant marks order as ready
 	restaurantMarkOrderReady(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+
+	// Courier reports pickup
+	courierReportPickup(ctx, t, clients, courier.UUID, order.OrderUuid)
+
+	// Courier reports delivery
+	courierReportDelivered(ctx, t, clients, courier.UUID, order.OrderUuid)
+}
+
+func TestComponent_CourierCityFiltering(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+	country := testutils.GenerateRandomCountry()
+
+	restaurant := onboardRestaurant(ctx, t, clients, country)
+	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+
+	courierInSameCity := registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+
+	differentCity := restaurant.Data.Address.City + "_Different"
+	courierInDifferentCity := registerCourierInCity(ctx, t, clients, country, differentCity)
+
+	// Create and place order
+	orderItems := []ordersclient.OrderItem{
+		{
+			MenuItemUuid: restaurant.Data.MenuItems[0].Uuid,
+			Quantity:     1,
+		},
+	}
+	deliveryAddress := testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City)
+	quote := createQuote(ctx, t, clients, customerUUID, restaurant.UUID, orderItems, deliveryAddress)
+	order := placeOrderFromQuote(ctx, t, clients, customerUUID, restaurant.UUID, quote)
+
+	restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+
+	t.Run("courier_from_different_city_cannot_accept_order", func(t *testing.T) {
+		resp, err := clients.Orders.CourierAcceptDeliveryWithResponse(
+			ctx,
+			&ordersclient.CourierAcceptDeliveryParams{
+				CourierUUID: courierInDifferentCity.UUID,
+			},
+			ordersclient.CourierAcceptDeliveryJSONRequestBody{
+				OrderUuid: order.OrderUuid,
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode())
+		require.NotNil(t, resp.JSON400)
+
+		expectedError := ordersclient.ErrorResponse{
+			Details: []ordersclient.ErrorDetails{
+				{
+					Message:    fmt.Sprintf("courier operates in %s only", differentCity),
+					ErrorSlug:  "courier-out-of-delivery-zone",
+					EntityType: common.ToPtr("order"),
+				},
+			},
+			Message: "courier cannot accept orders outside their delivery zone",
+			Slug:    "courier-out-of-delivery-zone",
+		}
+
+		assertJsonReprEqual(t, expectedError, resp.JSON400)
+	})
+
+	t.Run("courier_from_same_city_can_accept_order", func(t *testing.T) {
+		resp, err := clients.Orders.CourierAcceptDeliveryWithResponse(
+			ctx,
+			&ordersclient.CourierAcceptDeliveryParams{
+				CourierUUID: courierInSameCity.UUID,
+			},
+			ordersclient.CourierAcceptDeliveryJSONRequestBody{
+				OrderUuid: order.OrderUuid,
+			},
+		)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusAccepted, resp.StatusCode())
+	})
 }
 
 func TestComponent_WrongRestaurantCannotManageOrder(t *testing.T) {
@@ -348,6 +437,54 @@ func TestComponent_WrongRestaurantCannotManageOrder(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, resp.StatusCode(),
 			"wrong restaurant should not be able to mark the order as ready")
 	})
+}
+
+func TestComponent_SecondCourierCannotAcceptSameOrder(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+
+	country := testutils.GenerateRandomCountry()
+
+	restaurant := onboardRestaurant(ctx, t, clients, country)
+
+	courierA := registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+	courierB := registerCourierInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
+
+	// Create quote and place order
+	orderItems := []ordersclient.OrderItem{
+		{
+			MenuItemUuid: restaurant.Data.MenuItems[0].Uuid,
+			Quantity:     1,
+		},
+	}
+	deliveryAddress := testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City)
+	quote := createQuote(ctx, t, clients, customerUUID, restaurant.UUID, orderItems, deliveryAddress)
+	order := placeOrderFromQuote(ctx, t, clients, customerUUID, restaurant.UUID, quote)
+
+	// Restaurant accepts order
+	restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+
+	// Courier A accepts delivery
+	courierAcceptDelivery(ctx, t, clients, courierA.UUID, order.OrderUuid)
+
+	// Courier B tries to accept the same order - should fail
+	resp, err := clients.Orders.CourierAcceptDeliveryWithResponse(
+		ctx,
+		&ordersclient.CourierAcceptDeliveryParams{
+			CourierUUID: courierB.UUID,
+		},
+		ordersclient.CourierAcceptDeliveryJSONRequestBody{
+			OrderUuid: order.OrderUuid,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusConflict, resp.StatusCode(),
+		"second courier should not be able to accept an already-accepted order")
+	require.NotNil(t, resp.JSON409)
+	assert.Equal(t, "already-accepted", resp.JSON409.Slug)
 }
 
 func TestComponent_PlaceOrder(t *testing.T) {

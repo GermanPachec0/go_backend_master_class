@@ -1,173 +1,114 @@
-# Restaurant Order Management
+# Courier Delivery Workflow
 
-The customer paid and the order is saved. But from the restaurant's perspective, nothing has happened yet. Time to build the other side: accepting orders and marking them ready for pickup.
+The restaurant accepted the order and marked it ready. Now someone needs to pick it up.
 
-Two new commands on the board: Accept Order and Mark As Prepared.
+That someone is the courier. Three endpoints complete the delivery side of the order lifecycle: accept delivery, report pickup, and report delivery. All three use the `updateFn` pattern from {{exerciseLink "restaurant order management" "11-complete-flow" "04-restaurant-order-management"}}, applied from the courier's perspective instead of the restaurant's.
+
+This exercise completes the full order flow. The courier commands fill in the last part of the board.
 
 {{miroBoard}}
 
-## The Two Endpoints
+Here's the full order lifecycle. The blue stages are what you'll build in this exercise:
 
-Both endpoints follow the same structure:
+```mermaid
+graph LR
+    subgraph Restaurant
+        direction LR
+        A["Placed"] --> B["Confirmed"] --> C["Ready"]
+    end
+    subgraph Courier
+        direction LR
+        D["Accepted"] --> E["Picked Up"] --> F["Delivered"]
+    end
+    C --> D
 
-- `POST /orders/restaurant/accept-order` sets `restaurant_confirmed_at` when the restaurant accepts the order. Authenticated by the `Restaurant-UUID` header, the request body contains `AcceptOrder` with `order_uuid`. Returns **202**.
-- `POST /orders/restaurant/mark-order-ready-for-pickup` sets `restaurant_prepared_at` when the food is ready. Same authentication, same shape. Request body: `MarkOrderReady` with `order_uuid`. Returns **202**.
+    classDef done fill:#c8e6c9
+    classDef current fill:#bbdefb
 
-Both return 202 (not 201) because these are status transitions, not resource creation. The structure is the same for both.
-
-The service methods use the `updateFn` callback pattern from {{exerciseLink "Quotes Repository" "08-advanced-repositories" "05-quotes-repository"}}. Same read-modify-write approach, now applied to order status transitions.
-
-## COALESCE for Partial Updates
-
-The orders table has many timestamp columns, but each operation only sets one. You need an UPDATE query that changes a single column without touching the rest.
-
-**COALESCE combined with `sqlc.narg` solves this: pass NULL for columns you don't want to change, and the existing value is preserved.**
-
-```sql
--- name: UpdateOrder :exec
-UPDATE
-    orders.orders
-SET
-    courier_uuid = COALESCE(sqlc.narg(courier_uuid), courier_uuid),
-    ordered_at = COALESCE(sqlc.narg(ordered_at), ordered_at),
-    restaurant_confirmed_at = COALESCE(sqlc.narg(restaurant_confirmed_at), restaurant_confirmed_at),
-    courier_accepted_at = COALESCE(sqlc.narg(courier_accepted_at), courier_accepted_at),
-    restaurant_prepared_at = COALESCE(sqlc.narg(restaurant_prepared_at), restaurant_prepared_at),
-    picked_up_at = COALESCE(sqlc.narg(picked_up_at), picked_up_at),
-    delivered_at = COALESCE(sqlc.narg(delivered_at), delivered_at)
-WHERE
-    order_uuid = $1;
+    class A,B,C done
+    class D,E,F current
 ```
 
-What's counter-intuitive is that **NULL here means "no change," not "clear the field."** `sqlc.narg` generates a pointer parameter. When you pass `nil`, sqlc sends NULL, and COALESCE falls back to the current column value.
+## The Three Endpoints
 
-You already know `sqlc.narg` from {{exerciseLink "Ordering and Filtering" "09-read-models" "02-ordering-filtering"}}, where it was used in WHERE clauses. Here it's used in SET clauses. Same tool, new application.
+| Endpoint | Method | Auth Header | Request Body | Success |
+|----------|--------|-------------|-------------|---------|
+| `/orders/courier/accept-delivery` | POST | `Courier-UUID` | `AcceptDelivery` with `order_uuid` | **202** |
+| `/orders/courier/report-pickup` | POST | `Courier-UUID` | `ReportPickup` with `order_uuid` | **202** |
+| `/orders/courier/report-delivery` | POST | `Courier-UUID` | `ReportDelivery` with `order_uuid` | **202** |
 
-This single query serves all future status transitions too (courier delivery, pickup, etc.), not only this exercise. It's good enough for our purposes.
+The [OpenAPI](https://academy.threedots.tech/knowledge/openapi) spec already defines these endpoints. The handlers are straightforward: they delegate to the service and return 202.
 
-## Idempotent Operations
+All three service methods use `UpdateOrder` with `updateFn`, same approach as {{exerciseLink "restaurant order management" "11-complete-flow" "04-restaurant-order-management"}}'s restaurant endpoints.
 
-Both operations should be **[idempotent](https://academy.threedots.tech/knowledge/idempotency)**. If a restaurant accepts the same order twice, `restaurant_confirmed_at` should not change. Network [retries](https://academy.threedots.tech/knowledge/retry) and user double-clicks mean duplicate requests happen in production.
+## Delivery Zone Validation
 
-**If the timestamp is already set, log a warning and return the order unchanged.** No error, no side effect.
+That said, accept-delivery has one new requirement.
 
-## Authorization
+**A courier should only accept orders in the same city they operate in.** Your service should compare the courier's registered city against the order's delivery address city. It's an exact city string match, not geographic distance.
 
-Both endpoints verify that the requesting restaurant owns the order. Compare the order's restaurant UUID against the `Restaurant-UUID` header. If they don't match, return **403** with error slug `"invalid-restaurant"`.
+The city lookup happens before `UpdateOrder`, outside the transaction. This is safe because a courier's city is set once at registration and never changes.
 
-This is an authorization problem (wrong actor), not a validation problem (bad input). That's why 403, not 400. HTTP 401 means "not authenticated" and fits when credentials are missing entirely. HTTP 403 means "authenticated but not allowed": the restaurant proved who it is, but it's trying to access someone else's order. Use `common.NewForbiddenError`, which follows the same pattern as `NewUnauthorizedError` from module 07.
+{{tip}}
+If couriers could change their city, reading it outside the transaction wouldn't be safe. You could handle that with a dedicated repository method:
 
-For now, that's all you need. No rejection, no cancellation.
+```go
+AssignCourierToOrder(
+    ctx context.Context,
+    orderUUID OrderUUID,
+    courierUUID CourierUUID,
+    validateFn func(ctx context.Context, order Order, courierCity string) error,
+) error
+```
+
+The repository reads the courier city and the order inside the same transaction, calls `validateFn` for zone validation, and updates the order itself. Our example solution keeps it simple since the city is immutable.
+{{endtip}}
+
+Not the most efficient validation, but it's good enough for our purposes.
+
+Accept delivery also enforces **one courier per order**. If another courier already accepted, reject with code 409 and slug `"already-accepted"`.
+
+## Pickup and Delivery
+
+In contrast, report-pickup and report-delivery are familiar.
+
+Both follow the [idempotent](https://academy.threedots.tech/knowledge/idempotency) pattern from {{exerciseLink "restaurant order management" "11-complete-flow" "04-restaurant-order-management"}}: verify the courier, check idempotency, set the timestamp. You already know the drill.
+
+Your authorization check works differently from the restaurant side, though. Your restaurant match helper only had to compare two UUIDs: the order's restaurant against the requesting restaurant. The courier version has an extra case.
+
+If no courier has been assigned to the order yet (`CourierUUID` is nil), report-pickup and report-delivery should return 409. You can't report progress on an order nobody has accepted. If a courier is assigned but doesn't match the requesting one, return 403.
+
+**Once you have the authorization helper, the service methods for pickup and delivery are almost identical to the restaurant methods from {{exerciseLink "restaurant order management" "11-complete-flow" "04-restaurant-order-management"}}.**
 
 ## Exercise
 
 Exercise path: ./project
 
-**Implement restaurant order management.** Two endpoints let a restaurant accept an order and mark it ready for pickup.
+Build the courier side of the order lifecycle. Three endpoints let a courier accept a delivery, report pickup, and report delivery.
 
-1. Add a `GetOrder` SQL query in `backend/orders/adapters/db/queries/orders.sql` that fetches an order by `order_uuid`.
+1. Add a `GetCourierCity` query to `backend/orders/adapters/db/queries/couriers.sql` and a matching method on the `CourierRepository` interface. Run `task gen` afterward (or `go generate ./...` if you don't use Task).
 
-2. Add the `UpdateOrder` SQL query (shown above) using COALESCE with `sqlc.narg` for partial updates. Run `task gen` to regenerate sqlc code. (If you don't use Task, run `go generate ./...` instead.)
+2. **Accept delivery** (`POST /orders/courier/accept-delivery`):
+   - Fetch the courier's city from the courier repository
+   - Reject if another courier already accepted the order (409, slug `"already-accepted"`)
+   - Reject if the courier's city does not match the order's delivery address city (400, slug `"courier-out-of-delivery-zone"`)
+   - The zone validation error should include details:
 
-3. **Add `OrderByID` and `UpdateOrder` methods to the `OrderRepository` interface** in the [application layer](https://academy.threedots.tech/knowledge/application-service). `OrderByID` should return a 404 error with slug `"order_not_found"` when the order doesn't exist.
+   ```json
+   {
+     "slug": "courier-out-of-delivery-zone",
+     "details": [
+       {
+         "entity_type": "order",
+         "error_slug": "courier-out-of-delivery-zone"
+       }
+     ]
+   }
+   ```
 
-4. Implement `OrderByID` in the repository. Handle `pgx.ErrNoRows` by returning `common.NewNotFoundError("order_not_found", ...)`.
+   - On success: set `CourierUUID` and `CourierAcceptedAt`, return 202
 
-5. **Implement `UpdateOrder` in the repository using the `updateFn` callback pattern with `UpdateInTx`**: read the order inside the transaction, call `updateFn`, persist the result.
-
-6. Add service methods for accepting the order and marking it ready for pickup. Inside each `updateFn` callback:
-   - Verify the restaurant owns the order (403 if not)
-   - Check if the timestamp is already set. If so, log a warning and return the order unchanged (idempotency)
-   - Set the appropriate timestamp
-
-7. Add HTTP handler methods that delegate to the service and return 202.
-
-Your endpoints should handle these behaviors:
-- `POST /orders/restaurant/accept-order` returns 202 on success
-- `POST /orders/restaurant/mark-order-ready-for-pickup` returns 202 on success
-- Wrong restaurant gets 403 for either endpoint
-- Accepting an already-accepted order preserves the original `restaurant_confirmed_at` timestamp
-
-{{tip}}
-When mapping between database types and application types, consider using positional (unnamed) struct fields instead of named fields:
-
-```go
-return app.Order{
-    dbOrder.OrderUuid,
-    dbOrder.QuoteUuid,
-    dbOrder.CustomerUuid,
-    dbOrder.RestaurantUuid,
-    dbOrder.CourierUuid,
-    dbOrder.DeliveryAddress,
-    dbOrder.OrderedAt,
-    // TODO: remaining timestamp and amount fields
-}
-```
-
-If someone adds a new field to the `Order` struct later, this code won't compile until it's updated. With named fields, the new field silently gets a zero value. It's more verbose, but it catches missing fields at compile time.
-{{endtip}}
-
-{{hints}}
-
-{{hint 1}}
-The `updateFn` callback runs inside the transaction, after the order is read from the database. Both the authorization check and the idempotency check go inside this callback:
-
-```go
-func(ctx context.Context, order Order) (Order, error) {
-    if err := checkRestaurantMatch(order.RestaurantUUID, restaurantUUID); err != nil {
-        return Order{}, err
-    }
-
-    if order.RestaurantConfirmedAt != nil {
-        // Already confirmed -- idempotent, just return unchanged
-        return order, nil
-    }
-    order.RestaurantConfirmedAt = common.ToPtr(time.Now())
-
-    return order, nil
-}
-```
-
-The mark-ready-for-pickup method follows the same shape but checks and sets `RestaurantPreparedAt`.
-{{endhint}}
-
-{{hint 2}}
-The `UpdateOrder` repository method follows the same structure as the quotes repository from module 08:
-
-```go
-func (r *OrdersRepo) UpdateOrder(
-    ctx context.Context,
-    orderUUID app.OrderUUID,
-    updateFn func(ctx context.Context, order app.Order) (app.Order, error),
-) error {
-    return common.UpdateInTx(ctx, r.db, func(ctx context.Context, tx pgx.Tx) error {
-        queries := dbmodels.New(tx)
-
-        dbOrder, err := queries.GetOrder(ctx, orderUUID)
-        if err != nil {
-            return fmt.Errorf("failed to get order: %w", err)
-        }
-
-        updatedOrder, err := updateFn(ctx, dbOrderToAppOrder(dbOrder))
-        if err != nil {
-            return fmt.Errorf("failed to update order: %w", err)
-        }
-
-        return queries.UpdateOrder(ctx, dbmodels.UpdateOrderParams{
-            orderUUID,
-            updatedOrder.CourierUUID,
-            &updatedOrder.OrderedAt,
-            updatedOrder.RestaurantConfirmedAt,
-            updatedOrder.CourierAcceptedAt,
-            updatedOrder.RestaurantPreparedAt,
-            updatedOrder.PickedUpAt,
-            updatedOrder.DeliveredAt,
-        })
-    })
-}
-```
-
-Pass each timestamp field as a pointer. Fields you set will have values; fields you didn't touch stay `nil`, and COALESCE preserves the existing database value.
-{{endhint}}
-
-{{endhints}}
+3. **Report pickup** (`POST /orders/courier/report-pickup`) and **report delivery** (`POST /orders/courier/report-delivery`):
+   - Verify the requesting courier is assigned to the order. If no courier is assigned, return 409. If the courier doesn't match, return 403
+   - **Both operations should be idempotent.** If the timestamp is already set, log a warning and return the order unchanged
+   - On success: set `PickedUpAt` or `DeliveredAt`, return 202
