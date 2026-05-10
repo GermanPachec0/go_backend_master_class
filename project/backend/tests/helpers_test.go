@@ -5,6 +5,7 @@ package tests_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"testing"
@@ -12,6 +13,8 @@ import (
 
 	bank2 "github.com/ThreeDotsLabs/the-domain-engineer/clients/bank"
 	gofakeit "github.com/brianvoe/gofakeit/v7"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -25,6 +28,31 @@ import (
 	ordersclient "eats/backend/orders/api/http/client"
 	"eats/backend/orders/app"
 )
+
+func assertRestaurantMenuPublished(ctx context.Context, t *testing.T, clients testClients, restaurantUUID app.RestaurantUUID, restaurant ordersclient.OnboardRestaurant) {
+	t.Helper()
+
+	resp, err := clients.Orders.CustomerGetRestaurantMenuWithResponse(ctx, restaurantUUID, &ordersclient.CustomerGetRestaurantMenuParams{
+		CustomerUUID: app.CustomerUUID{common.NewUUIDv7()},
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode())
+
+	require.Empty(
+		t,
+		cmp.Diff(
+			restaurant.MenuItems,
+			resp.JSON200.Items,
+			cmpopts.SortSlices(func(a, b ordersclient.MenuItem) bool {
+				return a.Uuid.String() < b.Uuid.String()
+			}),
+		),
+	)
+	require.Equal(t, resp.JSON200.RestaurantName, restaurant.Name)
+	require.Equal(t, resp.JSON200.Address, restaurant.Address)
+	require.Equal(t, resp.JSON200.Description, restaurant.Description)
+	require.Equal(t, resp.JSON200.Currency, restaurant.Currency)
+}
 
 type testRestaurant struct {
 	UUID app.RestaurantUUID
@@ -259,6 +287,120 @@ func updateRestaurantMenu(
 	)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode())
+}
+
+func assertMenuItemsEquals(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	restaurantUUID app.RestaurantUUID,
+	expectedMenuItems []ordersclient.MenuItem,
+) {
+	t.Helper()
+
+	menuResp, err := clients.Orders.CustomerGetRestaurantMenuWithResponse(ctx, restaurantUUID, &ordersclient.CustomerGetRestaurantMenuParams{
+		CustomerUUID: app.CustomerUUID{common.NewUUIDv7()},
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, menuResp.StatusCode())
+
+	require.Len(t, menuResp.JSON200.Items, len(expectedMenuItems), "Menu should contain expected number of items")
+
+	expectedUUIDs := make([]app.RestaurantMenuItemUUID, len(expectedMenuItems))
+	for i, item := range expectedMenuItems {
+		expectedUUIDs[i] = item.Uuid
+	}
+
+	actualUUIDs := make([]app.RestaurantMenuItemUUID, len(menuResp.JSON200.Items))
+	for i, item := range menuResp.JSON200.Items {
+		actualUUIDs[i] = item.Uuid
+	}
+
+	require.ElementsMatch(t, expectedUUIDs, actualUUIDs, "Menu should contain only expected items")
+}
+
+func assertArchivedMenuItemsNotInMenu(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	restaurantUUID app.RestaurantUUID,
+	archivedItems []ordersclient.MenuItem,
+) {
+	t.Helper()
+
+	menuResp, err := clients.Orders.CustomerGetRestaurantMenuWithResponse(ctx, restaurantUUID, &ordersclient.CustomerGetRestaurantMenuParams{
+		CustomerUUID: app.CustomerUUID{common.NewUUIDv7()},
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, menuResp.StatusCode())
+
+	for _, archivedItem := range archivedItems {
+		for _, actualItem := range menuResp.JSON200.Items {
+			require.NotEqual(
+				t,
+				archivedItem.Uuid,
+				actualItem.Uuid,
+				"Archived item %s should not be in the menu",
+				archivedItem.Uuid,
+			)
+		}
+	}
+}
+
+func assertOrderWithArchivedItemFails(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	customerUUID app.CustomerUUID,
+	restaurantUUID app.RestaurantUUID,
+	archivedItems ordersclient.MenuItem,
+	country shared.CountryCode,
+	city string,
+) {
+	t.Helper()
+
+	// Try to create an order offer with an archived item
+	createOfferRequest := ordersclient.CreateQuoteRequest{
+		RestaurantUuid: restaurantUUID,
+		Items: []ordersclient.OrderItem{
+			{
+				MenuItemUuid: archivedItems.Uuid,
+				Quantity:     1,
+			},
+		},
+		DeliveryAddress: testutils.GenerateOpenapiAddressInCity(country, city),
+	}
+
+	offerResp, err := clients.Orders.CustomerCreateQuoteWithResponse(
+		ctx,
+		&ordersclient.CustomerCreateQuoteParams{
+			CustomerUUID: customerUUID,
+		},
+		createOfferRequest,
+	)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		http.StatusGone,
+		offerResp.StatusCode(),
+		"Should return 400 when creating offer with archived items",
+	)
+
+	require.NotNil(t, offerResp.JSON410, "Should have error response body")
+	require.NotEmpty(t, offerResp.JSON410.Details, "Should have errors in response")
+	require.Equal(
+		t,
+		"archived-menu-position",
+		offerResp.JSON410.Details[0].ErrorSlug,
+		"Error slug should indicate unavailable menu items",
+	)
+	require.Equal(
+		t,
+		// it's part of the public contract - we want to assert it
+		fmt.Sprintf("menu position '%s' is archived", archivedItems.Name),
+		offerResp.JSON410.Details[0].Message,
+		"Error message should indicate items not available",
+	)
 }
 
 func randomPrice() decimal.Decimal {

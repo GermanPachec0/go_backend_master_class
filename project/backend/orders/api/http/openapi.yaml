@@ -292,6 +292,36 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /orders/customer/restaurants:
+    get:
+      summary: List all restaurants
+      operationId: customerListRestaurants
+      tags:
+        - customer
+      parameters:
+        - name: Customer-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/CustomerUUID'
+          description: Customer UUID
+      responses:
+        '200':
+          description: List of restaurants
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - restaurants
+                properties:
+                  restaurants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Restaurant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /orders/restaurant/onboard/{restaurant_uuid}:
     put:
       summary: Onboard or replace a restaurant with full details
@@ -366,6 +396,59 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/MenuItemWithRestaurant'
+
+  /orders/customer/{restaurant_uuid}/menu:
+    get:
+      summary: Get restaurant menu
+      operationId: customerGetRestaurantMenu
+      tags:
+        - customer
+      parameters:
+        - name: Customer-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/CustomerUUID'
+          description: Customer UUID
+        - name: restaurant_uuid
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/RestaurantUUID'
+          description: UUID of the restaurant
+      responses:
+        '200':
+          description: Restaurant menu
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - restaurant_uuid
+                  - restaurant_name
+                  - address
+                  - description
+                  - currency
+                  - items
+                properties:
+                  restaurant_uuid:
+                    $ref: '#/components/schemas/RestaurantUUID'
+                  restaurant_name:
+                    type: string
+                  address:
+                    $ref: '#/components/schemas/Address'
+                  description:
+                    type: string
+                  currency:
+                    $ref: '#/components/schemas/Currency'
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MenuItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
 components:
   schemas:
@@ -623,6 +706,25 @@ components:
         issue_description:
           type: string
           description: Description of the delivery issue
+
+    Restaurant:
+      type: object
+      required:
+        - uuid
+        - name
+        - description
+        - address
+      properties:
+        uuid:
+          $ref: '#/components/schemas/RestaurantUUID'
+        name:
+          type: string
+          description: Restaurant name
+        description:
+          type: string
+          description: Restaurant description
+        address:
+          $ref: '#/components/schemas/Address'
 
     MenuItem:
       type: object
