@@ -197,6 +197,101 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /orders/courier/accept-delivery:
+    post:
+      summary: Courier accepts delivery job
+      operationId: courierAcceptDelivery
+      tags:
+        - courier
+      parameters:
+        - name: Courier-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/CourierUUID'
+          description: Courier UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptDelivery'
+      responses:
+        '202':
+          description: Delivery acceptance recorded
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orders/courier/report-pickup:
+    post:
+      summary: Courier reports picking up an order
+      operationId: courierReportPickup
+      tags:
+        - courier
+      parameters:
+        - name: Courier-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/CourierUUID'
+          description: Courier UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportPickup'
+      responses:
+        '202':
+          description: Pickup recorded
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /orders/courier/report-delivery:
+    post:
+      summary: Courier reports successful delivery
+      operationId: courierReportDelivery
+      tags:
+        - courier
+      parameters:
+        - name: Courier-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/CourierUUID'
+          description: Courier UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportDelivery'
+      responses:
+        '202':
+          description: Delivery recorded
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /orders/restaurant/onboard/{restaurant_uuid}:
     put:
       summary: Onboard or replace a restaurant with full details
@@ -493,6 +588,30 @@ components:
         order_uuid:
           $ref: '#/components/schemas/OrderUUID'
 
+    AcceptDelivery:
+      type: object
+      required:
+        - order_uuid
+      properties:
+        order_uuid:
+          $ref: '#/components/schemas/OrderUUID'
+
+    ReportPickup:
+      type: object
+      required:
+        - order_uuid
+      properties:
+        order_uuid:
+          $ref: '#/components/schemas/OrderUUID'
+
+    ReportDelivery:
+      type: object
+      required:
+        - order_uuid
+      properties:
+        order_uuid:
+          $ref: '#/components/schemas/OrderUUID'
+
     ReportDeliveryIssue:
       type: object
       required:
@@ -732,6 +851,13 @@ components:
 
     NotFound:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Conflict:
+      description: Conflict with current state
       content:
         application/json:
           schema:
