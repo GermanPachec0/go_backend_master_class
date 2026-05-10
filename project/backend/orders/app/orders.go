@@ -158,6 +158,12 @@ type OrderRepository interface {
 	QuoteWithMenuItems(ctx context.Context, quoteUUID QuoteUUID) (Quote, map[RestaurantMenuItemUUID]MenuItem, error)
 
 	SaveOrder(ctx context.Context, order Order) error
+
+	GetOrder(ctx context.Context, orderUUID OrderUUID) (Order, error)
+
+	UpdateOrder(ctx context.Context,
+		orderUUID OrderUUID,
+		updateFn func(ctx context.Context, order Order) (Order, error)) error
 }
 
 type CreateQuote struct {
@@ -361,6 +367,69 @@ func (s *Service) PlaceOrder(ctx context.Context, req PlaceOrder) (Order, error)
 	}
 
 	return order, nil
+}
+
+func (s *Service) AcceptOrder(ctx context.Context,
+	orderUuid OrderUUID,
+	restaurantConfirmedAt time.Time,
+	restaurantUUID RestaurantUUID,
+) error {
+	return s.orderRepository.UpdateOrder(
+		ctx,
+		orderUuid,
+		func(ctx context.Context, order Order) (Order, error) {
+
+			// verify that restaurant owns the order
+			if order.RestaurantUUID != restaurantUUID {
+				return order, common.NewForbiddenError(
+					"invalid-restaurant",
+					"restaurant does not own the order",
+				)
+			}
+			// verify that the order is not already accepted
+			if order.RestaurantConfirmedAt != nil {
+				return order, nil
+			}
+			order.RestaurantConfirmedAt = &restaurantConfirmedAt
+
+			return order, nil
+		})
+}
+
+func (s *Service) MarkOrderReadyForPickup(ctx context.Context,
+	orderUuid OrderUUID,
+	restaurantUUID RestaurantUUID,
+	readyForPickupAt time.Time) error {
+	return s.orderRepository.UpdateOrder(
+		ctx,
+		orderUuid,
+		func(ctx context.Context, order Order) (Order, error) {
+			// verify that restaurant owns the order
+			if order.RestaurantUUID != restaurantUUID {
+				return order, common.NewForbiddenError(
+					"invalid-restaurant",
+					"restaurant does not own the order",
+				)
+			}
+			// verify that the order is accepted
+			if order.RestaurantConfirmedAt == nil {
+				return order, common.NewForbiddenError(
+					"order-not-confirmed",
+					"order must be confirmed by restaurant before it can be marked as ready for pickup",
+				)
+			}
+			// verify that the order is not already marked as ready for pickup
+			if order.RestaurantPreparedAt != nil {
+				return order, nil
+			}
+			order.RestaurantPreparedAt = &readyForPickupAt
+
+			return order, nil
+		})
+}
+
+func (s *Service) GetOrder(ctx context.Context, orderUUID OrderUUID) (Order, error) {
+	return s.orderRepository.GetOrder(ctx, orderUUID)
 }
 
 func ensureQuoteItemsAreNotArchived(menuItems map[RestaurantMenuItemUUID]MenuItem) error {

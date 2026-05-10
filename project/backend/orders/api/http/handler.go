@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"time"
 
 	"eats/backend/common"
 	"eats/backend/common/shared"
@@ -264,6 +265,34 @@ func (h Handler) ListMenuItems(ctx context.Context, request ListMenuItemsRequest
 	}
 
 	return ListMenuItems200JSONResponse(items), nil
+}
+
+func (h Handler) RestaurantAcceptOrder(ctx context.Context, request RestaurantAcceptOrderRequestObject) (RestaurantAcceptOrderResponseObject, error) {
+	if request.Params.RestaurantUUID.IsZero() {
+		return nil, common.NewUnauthorizedError("missing-restaurant-uuid", "restaurant UUID is required")
+	}
+
+	confirmedAt := time.Now()
+	err := h.service.AcceptOrder(ctx, request.Body.OrderUuid, confirmedAt, request.Params.RestaurantUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	return RestaurantAcceptOrder202Response{}, nil
+}
+
+func (h Handler) RestaurantMarkOrderReadyForPickup(ctx context.Context, request RestaurantMarkOrderReadyForPickupRequestObject) (RestaurantMarkOrderReadyForPickupResponseObject, error) {
+	if request.Params.RestaurantUUID.IsZero() {
+		return nil, common.NewUnauthorizedError("missing-restaurant-uuid", "restaurant UUID is required")
+	}
+
+	readyForPickupAt := time.Now()
+	err := h.service.MarkOrderReadyForPickup(ctx, request.Body.OrderUuid, request.Params.RestaurantUUID, readyForPickupAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return RestaurantMarkOrderReadyForPickup202Response{}, nil
 }
 
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {

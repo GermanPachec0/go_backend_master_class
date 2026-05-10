@@ -30,6 +30,12 @@ const (
 	Relevance ListMenuItemsParamsOrderBy = "relevance"
 )
 
+// AcceptOrder defines model for AcceptOrder.
+type AcceptOrder struct {
+	// OrderUuid UUID of an order
+	OrderUuid OrderUUID `json:"order_uuid"`
+}
+
 // Address defines model for Address.
 type Address struct {
 	// City City of the address
@@ -138,6 +144,12 @@ type ErrorResponse struct {
 
 	// Slug Error slug
 	Slug string `json:"slug"`
+}
+
+// MarkOrderReady defines model for MarkOrderReady.
+type MarkOrderReady struct {
+	// OrderUuid UUID of an order
+	OrderUuid OrderUUID `json:"order_uuid"`
 }
 
 // MenuItem defines model for MenuItem.
@@ -287,6 +299,18 @@ type CustomerPlaceOrderParams struct {
 	CustomerUUID CustomerUUID `json:"Customer-UUID"`
 }
 
+// RestaurantAcceptOrderParams defines parameters for RestaurantAcceptOrder.
+type RestaurantAcceptOrderParams struct {
+	// RestaurantUUID Restaurant UUID
+	RestaurantUUID RestaurantUUID `json:"Restaurant-UUID"`
+}
+
+// RestaurantMarkOrderReadyForPickupParams defines parameters for RestaurantMarkOrderReadyForPickup.
+type RestaurantMarkOrderReadyForPickupParams struct {
+	// RestaurantUUID Restaurant UUID
+	RestaurantUUID RestaurantUUID `json:"Restaurant-UUID"`
+}
+
 // OnboardRestaurantParams defines parameters for OnboardRestaurant.
 type OnboardRestaurantParams struct {
 	OperatorUUID OperatorUUID `json:"Operator-UUID"`
@@ -319,6 +343,12 @@ type RegisterCourierJSONRequestBody = RegisterCourier
 // RegisterCustomerJSONRequestBody defines body for RegisterCustomer for application/json ContentType.
 type RegisterCustomerJSONRequestBody = RegisterCustomer
 
+// RestaurantAcceptOrderJSONRequestBody defines body for RestaurantAcceptOrder for application/json ContentType.
+type RestaurantAcceptOrderJSONRequestBody = AcceptOrder
+
+// RestaurantMarkOrderReadyForPickupJSONRequestBody defines body for RestaurantMarkOrderReadyForPickup for application/json ContentType.
+type RestaurantMarkOrderReadyForPickupJSONRequestBody = MarkOrderReady
+
 // OnboardRestaurantJSONRequestBody defines body for OnboardRestaurant for application/json ContentType.
 type OnboardRestaurantJSONRequestBody = OnboardRestaurant
 
@@ -336,6 +366,12 @@ type ServerInterface interface {
 	// Register a new customer
 	// (POST /orders/register-customer)
 	RegisterCustomer(ctx echo.Context) error
+	// Restaurant accepts an order
+	// (POST /orders/restaurant/accept-order)
+	RestaurantAcceptOrder(ctx echo.Context, params RestaurantAcceptOrderParams) error
+	// Restaurant marks order as ready for pickup
+	// (POST /orders/restaurant/mark-order-ready-for-pickup)
+	RestaurantMarkOrderReadyForPickup(ctx echo.Context, params RestaurantMarkOrderReadyForPickupParams) error
 	// Onboard or replace a restaurant with full details
 	// (PUT /orders/restaurant/onboard/{restaurant_uuid})
 	OnboardRestaurant(ctx echo.Context, restaurantUuid RestaurantUUID, params OnboardRestaurantParams) error
@@ -426,6 +462,68 @@ func (w *ServerInterfaceWrapper) RegisterCustomer(ctx echo.Context) error {
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.RegisterCustomer(ctx)
+	return err
+}
+
+// RestaurantAcceptOrder converts echo context to params.
+func (w *ServerInterfaceWrapper) RestaurantAcceptOrder(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RestaurantAcceptOrderParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Restaurant-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Restaurant-UUID")]; found {
+		var RestaurantUUID RestaurantUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Restaurant-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Restaurant-UUID", valueList[0], &RestaurantUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Restaurant-UUID: %s", err))
+		}
+
+		params.RestaurantUUID = RestaurantUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Restaurant-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.RestaurantAcceptOrder(ctx, params)
+	return err
+}
+
+// RestaurantMarkOrderReadyForPickup converts echo context to params.
+func (w *ServerInterfaceWrapper) RestaurantMarkOrderReadyForPickup(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RestaurantMarkOrderReadyForPickupParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Restaurant-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Restaurant-UUID")]; found {
+		var RestaurantUUID RestaurantUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Restaurant-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Restaurant-UUID", valueList[0], &RestaurantUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Restaurant-UUID: %s", err))
+		}
+
+		params.RestaurantUUID = RestaurantUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Restaurant-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.RestaurantMarkOrderReadyForPickup(ctx, params)
 	return err
 }
 
@@ -531,6 +629,8 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 	router.POST(baseURL+"/orders/customer/place-order", wrapper.CustomerPlaceOrder)
 	router.POST(baseURL+"/orders/register-courier", wrapper.RegisterCourier)
 	router.POST(baseURL+"/orders/register-customer", wrapper.RegisterCustomer)
+	router.POST(baseURL+"/orders/restaurant/accept-order", wrapper.RestaurantAcceptOrder)
+	router.POST(baseURL+"/orders/restaurant/mark-order-ready-for-pickup", wrapper.RestaurantMarkOrderReadyForPickup)
 	router.PUT(baseURL+"/orders/restaurant/onboard/:restaurant_uuid", wrapper.OnboardRestaurant)
 	router.GET(baseURL+"/orders/restaurants/menu-items", wrapper.ListMenuItems)
 
@@ -733,6 +833,112 @@ func (response RegisterCustomer409JSONResponse) VisitRegisterCustomerResponse(w 
 	return json.NewEncoder(w).Encode(response)
 }
 
+type RestaurantAcceptOrderRequestObject struct {
+	Params RestaurantAcceptOrderParams
+	Body   *RestaurantAcceptOrderJSONRequestBody
+}
+
+type RestaurantAcceptOrderResponseObject interface {
+	VisitRestaurantAcceptOrderResponse(w http.ResponseWriter) error
+}
+
+type RestaurantAcceptOrder202Response struct {
+}
+
+func (response RestaurantAcceptOrder202Response) VisitRestaurantAcceptOrderResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type RestaurantAcceptOrder400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response RestaurantAcceptOrder400JSONResponse) VisitRestaurantAcceptOrderResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RestaurantAcceptOrder401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RestaurantAcceptOrder401JSONResponse) VisitRestaurantAcceptOrderResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RestaurantAcceptOrder403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response RestaurantAcceptOrder403JSONResponse) VisitRestaurantAcceptOrderResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RestaurantAcceptOrder404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response RestaurantAcceptOrder404JSONResponse) VisitRestaurantAcceptOrderResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RestaurantMarkOrderReadyForPickupRequestObject struct {
+	Params RestaurantMarkOrderReadyForPickupParams
+	Body   *RestaurantMarkOrderReadyForPickupJSONRequestBody
+}
+
+type RestaurantMarkOrderReadyForPickupResponseObject interface {
+	VisitRestaurantMarkOrderReadyForPickupResponse(w http.ResponseWriter) error
+}
+
+type RestaurantMarkOrderReadyForPickup202Response struct {
+}
+
+func (response RestaurantMarkOrderReadyForPickup202Response) VisitRestaurantMarkOrderReadyForPickupResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type RestaurantMarkOrderReadyForPickup400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response RestaurantMarkOrderReadyForPickup400JSONResponse) VisitRestaurantMarkOrderReadyForPickupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RestaurantMarkOrderReadyForPickup401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RestaurantMarkOrderReadyForPickup401JSONResponse) VisitRestaurantMarkOrderReadyForPickupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RestaurantMarkOrderReadyForPickup403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response RestaurantMarkOrderReadyForPickup403JSONResponse) VisitRestaurantMarkOrderReadyForPickupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RestaurantMarkOrderReadyForPickup404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response RestaurantMarkOrderReadyForPickup404JSONResponse) VisitRestaurantMarkOrderReadyForPickupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type OnboardRestaurantRequestObject struct {
 	RestaurantUuid RestaurantUUID `json:"restaurant_uuid"`
 	Params         OnboardRestaurantParams
@@ -809,6 +1015,12 @@ type StrictServerInterface interface {
 	// Register a new customer
 	// (POST /orders/register-customer)
 	RegisterCustomer(ctx context.Context, request RegisterCustomerRequestObject) (RegisterCustomerResponseObject, error)
+	// Restaurant accepts an order
+	// (POST /orders/restaurant/accept-order)
+	RestaurantAcceptOrder(ctx context.Context, request RestaurantAcceptOrderRequestObject) (RestaurantAcceptOrderResponseObject, error)
+	// Restaurant marks order as ready for pickup
+	// (POST /orders/restaurant/mark-order-ready-for-pickup)
+	RestaurantMarkOrderReadyForPickup(ctx context.Context, request RestaurantMarkOrderReadyForPickupRequestObject) (RestaurantMarkOrderReadyForPickupResponseObject, error)
 	// Onboard or replace a restaurant with full details
 	// (PUT /orders/restaurant/onboard/{restaurant_uuid})
 	OnboardRestaurant(ctx context.Context, request OnboardRestaurantRequestObject) (OnboardRestaurantResponseObject, error)
@@ -943,6 +1155,68 @@ func (sh *strictHandler) RegisterCustomer(ctx echo.Context) error {
 		return err
 	} else if validResponse, ok := response.(RegisterCustomerResponseObject); ok {
 		return validResponse.VisitRegisterCustomerResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// RestaurantAcceptOrder operation middleware
+func (sh *strictHandler) RestaurantAcceptOrder(ctx echo.Context, params RestaurantAcceptOrderParams) error {
+	var request RestaurantAcceptOrderRequestObject
+
+	request.Params = params
+
+	var body RestaurantAcceptOrderJSONRequestBody
+	if err := ctx.Bind(&body); err != nil {
+		return err
+	}
+	request.Body = &body
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.RestaurantAcceptOrder(ctx.Request().Context(), request.(RestaurantAcceptOrderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RestaurantAcceptOrder")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(RestaurantAcceptOrderResponseObject); ok {
+		return validResponse.VisitRestaurantAcceptOrderResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// RestaurantMarkOrderReadyForPickup operation middleware
+func (sh *strictHandler) RestaurantMarkOrderReadyForPickup(ctx echo.Context, params RestaurantMarkOrderReadyForPickupParams) error {
+	var request RestaurantMarkOrderReadyForPickupRequestObject
+
+	request.Params = params
+
+	var body RestaurantMarkOrderReadyForPickupJSONRequestBody
+	if err := ctx.Bind(&body); err != nil {
+		return err
+	}
+	request.Body = &body
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.RestaurantMarkOrderReadyForPickup(ctx.Request().Context(), request.(RestaurantMarkOrderReadyForPickupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RestaurantMarkOrderReadyForPickup")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(RestaurantMarkOrderReadyForPickupResponseObject); ok {
+		return validResponse.VisitRestaurantMarkOrderReadyForPickupResponse(ctx.Response())
 	} else if response != nil {
 		return fmt.Errorf("unexpected response type: %T", response)
 	}

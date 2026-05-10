@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -74,17 +75,17 @@ func (r *OrdersRepo) CreateQuote(
 		}
 
 		err = queries.AddQuote(ctx, dbmodels.AddQuoteParams{
-			quote.QuoteUUID,
-			quote.CustomerUUID,
-			quote.RestaurantUUID,
-			quote.DeliveryAddress,
-			quote.ItemsSubtotalGross,
-			quote.ServiceFeeGross,
-			quote.DeliveryFeeGross,
-			quote.TotalAmountGross,
-			quote.TotalTax,
-			time.Now(),
-			quote.Currency,
+			QuoteUuid:          quote.QuoteUUID,
+			CustomerUuid:       quote.CustomerUUID,
+			RestaurantUuid:     quote.RestaurantUUID,
+			DeliveryAddress:    quote.DeliveryAddress,
+			ItemsSubtotalGross: quote.ItemsSubtotalGross,
+			ServiceFeeGross:    quote.ServiceFeeGross,
+			DeliveryFeeGross:   quote.DeliveryFeeGross,
+			TotalAmountGross:   quote.TotalAmountGross,
+			TotalTax:           quote.TotalTax,
+			CreatedAt:          time.Now(),
+			Currency:           quote.Currency,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to add quote %s: %w", quote.QuoteUUID, err)
@@ -109,11 +110,11 @@ func dbQuoteItemsFromApp(menuItems []app.QuoteMenuItem, quote app.Quote) []dbmod
 	quoteItems := make([]dbmodels.AddQuoteItemsParams, 0, len(menuItems))
 	for _, position := range menuItems {
 		quoteItems = append(quoteItems, dbmodels.AddQuoteItemsParams{
-			common.NewUUIDv7(),
-			quote.QuoteUUID,
-			position.MenuItemUUID,
-			position.GrossPrice,
-			int32(position.Quantity),
+			QuoteItemUuid: common.NewUUIDv7(),
+			QuoteUuid:     quote.QuoteUUID,
+			MenuItemUuid:  position.MenuItemUUID,
+			GrossPrice:    position.GrossPrice,
+			Quantity:      int32(position.Quantity),
 		})
 	}
 	return quoteItems
@@ -136,11 +137,11 @@ func appMenuItemsFromDbMenuItems(dbMenuItems []dbmodels.OrdersRestaurantMenuItem
 
 	for _, dbItemPosition := range dbMenuItems {
 		appMenuItems[dbItemPosition.RestaurantMenuItemUuid] = app.MenuItem{
-			dbItemPosition.RestaurantMenuItemUuid,
-			dbItemPosition.Name,
-			dbItemPosition.Ordering,
-			dbItemPosition.GrossPrice,
-			dbItemPosition.IsArchived,
+			MenuItemUUID: dbItemPosition.RestaurantMenuItemUuid,
+			Name:         dbItemPosition.Name,
+			Ordering:     dbItemPosition.Ordering,
+			GrossPrice:   dbItemPosition.GrossPrice,
+			IsArchived:   dbItemPosition.IsArchived,
 		}
 	}
 
@@ -186,35 +187,105 @@ func (r *OrdersRepo) SaveOrder(ctx context.Context, order app.Order) error {
 	})
 }
 
+func (r *OrdersRepo) UpdateOrder(ctx context.Context,
+	orderUUID app.OrderUUID,
+	updateFn func(ctx context.Context, order app.Order) (app.Order, error),
+) error {
+	return common.UpdateInTx(ctx, r.db, func(ctx context.Context, tx pgx.Tx) error {
+		queries := dbmodels.New(tx)
+
+		dbOrder, err := queries.GetOrder(ctx, orderUUID)
+		if err != nil {
+			return err
+		}
+
+		updatedOrder, err := updateFn(ctx, dbOrderToAppOrder(dbOrder))
+		if err != nil {
+			return fmt.Errorf("update function failed for order %s: %w", orderUUID, err)
+		}
+		return queries.UpdateOrder(ctx, dbmodels.UpdateOrderParams{
+			OrderUuid:             orderUUID,
+			CourierUuid:           updatedOrder.CourierUUID,
+			OrderedAt:             &updatedOrder.OrderedAt,
+			RestaurantConfirmedAt: updatedOrder.RestaurantConfirmedAt,
+			CourierAcceptedAt:     updatedOrder.CourierAcceptedAt,
+			RestaurantPreparedAt:  updatedOrder.RestaurantPreparedAt,
+			PickedUpAt:            updatedOrder.PickedUpAt,
+			DeliveredAt:           updatedOrder.DeliveredAt,
+		})
+	})
+}
+
+func (r *OrdersRepo) GetOrder(ctx context.Context, orderUUID app.OrderUUID) (app.Order, error) {
+	queries := dbmodels.New(r.db)
+
+	dbOrder, err := queries.GetOrder(ctx, orderUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return app.Order{}, common.NewNotFoundError(
+			"order_not_found",
+			"order with UUID %s not found",
+			orderUUID,
+		)
+	}
+	if err != nil {
+		return app.Order{}, fmt.Errorf("failed to get order %s: %w", orderUUID, err)
+	}
+
+	return dbOrderToAppOrder(dbOrder), nil
+}
+
+func dbOrderToAppOrder(dbOrder dbmodels.OrdersOrder) app.Order {
+	return app.Order{
+		OrderUUID:             dbOrder.OrderUuid,
+		QuoteUUID:             dbOrder.QuoteUuid,
+		CustomerUUID:          dbOrder.CustomerUuid,
+		RestaurantUUID:        dbOrder.RestaurantUuid,
+		CourierUUID:           dbOrder.CourierUuid,
+		DeliveryAddress:       dbOrder.DeliveryAddress,
+		OrderedAt:             dbOrder.OrderedAt,
+		RestaurantConfirmedAt: dbOrder.RestaurantConfirmedAt,
+		CourierAcceptedAt:     dbOrder.CourierAcceptedAt,
+		RestaurantPreparedAt:  dbOrder.RestaurantPreparedAt,
+		PickedUpAt:            dbOrder.PickedUpAt,
+		DeliveredAt:           dbOrder.DeliveredAt,
+		ItemsSubtotal:         dbOrder.ItemsSubtotalGross,
+		ServiceFeeGross:       dbOrder.ServiceFeeGross,
+		DeliveryFeeGross:      dbOrder.DeliveryFeeGross,
+		TotalAmountGross:      dbOrder.TotalAmountGross,
+		TotalTax:              dbOrder.TotalTax,
+		Currency:              dbOrder.Currency,
+	}
+}
+
 func dbOrderFromAppOrder(order app.Order) dbmodels.AddOrderParams {
 	return dbmodels.AddOrderParams{
-		order.OrderUUID,
-		order.QuoteUUID,
-		order.CustomerUUID,
-		order.RestaurantUUID,
-		order.DeliveryAddress,
-		order.ItemsSubtotal,
-		order.ServiceFeeGross,
-		order.DeliveryFeeGross,
-		order.TotalAmountGross,
-		order.TotalTax,
-		order.OrderedAt,
-		order.Currency,
+		OrderUuid:          order.OrderUUID,
+		QuoteUuid:          order.QuoteUUID,
+		CustomerUuid:       order.CustomerUUID,
+		RestaurantUuid:     order.RestaurantUUID,
+		DeliveryAddress:    order.DeliveryAddress,
+		ItemsSubtotalGross: order.ItemsSubtotal,
+		ServiceFeeGross:    order.ServiceFeeGross,
+		DeliveryFeeGross:   order.DeliveryFeeGross,
+		TotalAmountGross:   order.TotalAmountGross,
+		TotalTax:           order.TotalTax,
+		OrderedAt:          order.OrderedAt,
+		Currency:           order.Currency,
 	}
 }
 
 func appQuoteFromDbQuote(dbQuote dbmodels.OrdersQuote) app.Quote {
 	return app.Quote{
-		dbQuote.QuoteUuid,
-		dbQuote.CustomerUuid,
-		dbQuote.RestaurantUuid,
-		dbQuote.DeliveryAddress,
-		dbQuote.ItemsSubtotalGross,
-		dbQuote.ServiceFeeGross,
-		dbQuote.DeliveryFeeGross,
-		dbQuote.TotalAmountGross,
-		dbQuote.TotalTax,
-		dbQuote.Currency,
-		dbQuote.CreatedAt,
+		QuoteUUID:          dbQuote.QuoteUuid,
+		CustomerUUID:       dbQuote.CustomerUuid,
+		RestaurantUUID:     dbQuote.RestaurantUuid,
+		DeliveryAddress:    dbQuote.DeliveryAddress,
+		ItemsSubtotalGross: dbQuote.ItemsSubtotalGross,
+		ServiceFeeGross:    dbQuote.ServiceFeeGross,
+		DeliveryFeeGross:   dbQuote.DeliveryFeeGross,
+		TotalAmountGross:   dbQuote.TotalAmountGross,
+		TotalTax:           dbQuote.TotalTax,
+		Currency:           dbQuote.Currency,
+		CreatedAt:          dbQuote.CreatedAt,
 	}
 }

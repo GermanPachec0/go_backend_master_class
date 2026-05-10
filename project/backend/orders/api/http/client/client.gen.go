@@ -32,6 +32,12 @@ const (
 	Relevance ListMenuItemsParamsOrderBy = "relevance"
 )
 
+// AcceptOrder defines model for AcceptOrder.
+type AcceptOrder struct {
+	// OrderUuid UUID of an order
+	OrderUuid OrderUUID `json:"order_uuid"`
+}
+
 // Address defines model for Address.
 type Address struct {
 	// City City of the address
@@ -140,6 +146,12 @@ type ErrorResponse struct {
 
 	// Slug Error slug
 	Slug string `json:"slug"`
+}
+
+// MarkOrderReady defines model for MarkOrderReady.
+type MarkOrderReady struct {
+	// OrderUuid UUID of an order
+	OrderUuid OrderUUID `json:"order_uuid"`
 }
 
 // MenuItem defines model for MenuItem.
@@ -289,6 +301,18 @@ type CustomerPlaceOrderParams struct {
 	CustomerUUID CustomerUUID `json:"Customer-UUID"`
 }
 
+// RestaurantAcceptOrderParams defines parameters for RestaurantAcceptOrder.
+type RestaurantAcceptOrderParams struct {
+	// RestaurantUUID Restaurant UUID
+	RestaurantUUID RestaurantUUID `json:"Restaurant-UUID"`
+}
+
+// RestaurantMarkOrderReadyForPickupParams defines parameters for RestaurantMarkOrderReadyForPickup.
+type RestaurantMarkOrderReadyForPickupParams struct {
+	// RestaurantUUID Restaurant UUID
+	RestaurantUUID RestaurantUUID `json:"Restaurant-UUID"`
+}
+
 // OnboardRestaurantParams defines parameters for OnboardRestaurant.
 type OnboardRestaurantParams struct {
 	OperatorUUID OperatorUUID `json:"Operator-UUID"`
@@ -320,6 +344,12 @@ type RegisterCourierJSONRequestBody = RegisterCourier
 
 // RegisterCustomerJSONRequestBody defines body for RegisterCustomer for application/json ContentType.
 type RegisterCustomerJSONRequestBody = RegisterCustomer
+
+// RestaurantAcceptOrderJSONRequestBody defines body for RestaurantAcceptOrder for application/json ContentType.
+type RestaurantAcceptOrderJSONRequestBody = AcceptOrder
+
+// RestaurantMarkOrderReadyForPickupJSONRequestBody defines body for RestaurantMarkOrderReadyForPickup for application/json ContentType.
+type RestaurantMarkOrderReadyForPickupJSONRequestBody = MarkOrderReady
 
 // OnboardRestaurantJSONRequestBody defines body for OnboardRestaurant for application/json ContentType.
 type OnboardRestaurantJSONRequestBody = OnboardRestaurant
@@ -417,6 +447,16 @@ type ClientInterface interface {
 
 	RegisterCustomer(ctx context.Context, body RegisterCustomerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RestaurantAcceptOrderWithBody request with any body
+	RestaurantAcceptOrderWithBody(ctx context.Context, params *RestaurantAcceptOrderParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RestaurantAcceptOrder(ctx context.Context, params *RestaurantAcceptOrderParams, body RestaurantAcceptOrderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RestaurantMarkOrderReadyForPickupWithBody request with any body
+	RestaurantMarkOrderReadyForPickupWithBody(ctx context.Context, params *RestaurantMarkOrderReadyForPickupParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RestaurantMarkOrderReadyForPickup(ctx context.Context, params *RestaurantMarkOrderReadyForPickupParams, body RestaurantMarkOrderReadyForPickupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// OnboardRestaurantWithBody request with any body
 	OnboardRestaurantWithBody(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -512,6 +552,54 @@ func (c *Client) RegisterCustomerWithBody(ctx context.Context, contentType strin
 
 func (c *Client) RegisterCustomer(ctx context.Context, body RegisterCustomerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterCustomerRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RestaurantAcceptOrderWithBody(ctx context.Context, params *RestaurantAcceptOrderParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRestaurantAcceptOrderRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RestaurantAcceptOrder(ctx context.Context, params *RestaurantAcceptOrderParams, body RestaurantAcceptOrderJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRestaurantAcceptOrderRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RestaurantMarkOrderReadyForPickupWithBody(ctx context.Context, params *RestaurantMarkOrderReadyForPickupParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRestaurantMarkOrderReadyForPickupRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RestaurantMarkOrderReadyForPickup(ctx context.Context, params *RestaurantMarkOrderReadyForPickupParams, body RestaurantMarkOrderReadyForPickupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRestaurantMarkOrderReadyForPickupRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -744,6 +832,112 @@ func NewRegisterCustomerRequestWithBody(server string, contentType string, body 
 	return req, nil
 }
 
+// NewRestaurantAcceptOrderRequest calls the generic RestaurantAcceptOrder builder with application/json body
+func NewRestaurantAcceptOrderRequest(server string, params *RestaurantAcceptOrderParams, body RestaurantAcceptOrderJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRestaurantAcceptOrderRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewRestaurantAcceptOrderRequestWithBody generates requests for RestaurantAcceptOrder with any type of body
+func NewRestaurantAcceptOrderRequestWithBody(server string, params *RestaurantAcceptOrderParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/orders/restaurant/accept-order")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithLocation("simple", false, "Restaurant-UUID", runtime.ParamLocationHeader, params.RestaurantUUID)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Restaurant-UUID", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRestaurantMarkOrderReadyForPickupRequest calls the generic RestaurantMarkOrderReadyForPickup builder with application/json body
+func NewRestaurantMarkOrderReadyForPickupRequest(server string, params *RestaurantMarkOrderReadyForPickupParams, body RestaurantMarkOrderReadyForPickupJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRestaurantMarkOrderReadyForPickupRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewRestaurantMarkOrderReadyForPickupRequestWithBody generates requests for RestaurantMarkOrderReadyForPickup with any type of body
+func NewRestaurantMarkOrderReadyForPickupRequestWithBody(server string, params *RestaurantMarkOrderReadyForPickupParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/orders/restaurant/mark-order-ready-for-pickup")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithLocation("simple", false, "Restaurant-UUID", runtime.ParamLocationHeader, params.RestaurantUUID)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Restaurant-UUID", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewOnboardRestaurantRequest calls the generic OnboardRestaurant builder with application/json body
 func NewOnboardRestaurantRequest(server string, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, body OnboardRestaurantJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -948,6 +1142,16 @@ type ClientWithResponsesInterface interface {
 
 	RegisterCustomerWithResponse(ctx context.Context, body RegisterCustomerJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterCustomerClientResponse, error)
 
+	// RestaurantAcceptOrderWithBodyWithResponse request with any body
+	RestaurantAcceptOrderWithBodyWithResponse(ctx context.Context, params *RestaurantAcceptOrderParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RestaurantAcceptOrderClientResponse, error)
+
+	RestaurantAcceptOrderWithResponse(ctx context.Context, params *RestaurantAcceptOrderParams, body RestaurantAcceptOrderJSONRequestBody, reqEditors ...RequestEditorFn) (*RestaurantAcceptOrderClientResponse, error)
+
+	// RestaurantMarkOrderReadyForPickupWithBodyWithResponse request with any body
+	RestaurantMarkOrderReadyForPickupWithBodyWithResponse(ctx context.Context, params *RestaurantMarkOrderReadyForPickupParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RestaurantMarkOrderReadyForPickupClientResponse, error)
+
+	RestaurantMarkOrderReadyForPickupWithResponse(ctx context.Context, params *RestaurantMarkOrderReadyForPickupParams, body RestaurantMarkOrderReadyForPickupJSONRequestBody, reqEditors ...RequestEditorFn) (*RestaurantMarkOrderReadyForPickupClientResponse, error)
+
 	// OnboardRestaurantWithBodyWithResponse request with any body
 	OnboardRestaurantWithBodyWithResponse(ctx context.Context, restaurantUuid RestaurantUUID, params *OnboardRestaurantParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*OnboardRestaurantClientResponse, error)
 
@@ -1052,6 +1256,56 @@ func (r RegisterCustomerClientResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r RegisterCustomerClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RestaurantAcceptOrderClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r RestaurantAcceptOrderClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RestaurantAcceptOrderClientResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RestaurantMarkOrderReadyForPickupClientResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *BadRequest
+	JSON401      *Unauthorized
+	JSON403      *Forbidden
+	JSON404      *NotFound
+}
+
+// Status returns HTTPResponse.Status
+func (r RestaurantMarkOrderReadyForPickupClientResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RestaurantMarkOrderReadyForPickupClientResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -1170,6 +1424,40 @@ func (c *ClientWithResponses) RegisterCustomerWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseRegisterCustomerClientResponse(rsp)
+}
+
+// RestaurantAcceptOrderWithBodyWithResponse request with arbitrary body returning *RestaurantAcceptOrderClientResponse
+func (c *ClientWithResponses) RestaurantAcceptOrderWithBodyWithResponse(ctx context.Context, params *RestaurantAcceptOrderParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RestaurantAcceptOrderClientResponse, error) {
+	rsp, err := c.RestaurantAcceptOrderWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRestaurantAcceptOrderClientResponse(rsp)
+}
+
+func (c *ClientWithResponses) RestaurantAcceptOrderWithResponse(ctx context.Context, params *RestaurantAcceptOrderParams, body RestaurantAcceptOrderJSONRequestBody, reqEditors ...RequestEditorFn) (*RestaurantAcceptOrderClientResponse, error) {
+	rsp, err := c.RestaurantAcceptOrder(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRestaurantAcceptOrderClientResponse(rsp)
+}
+
+// RestaurantMarkOrderReadyForPickupWithBodyWithResponse request with arbitrary body returning *RestaurantMarkOrderReadyForPickupClientResponse
+func (c *ClientWithResponses) RestaurantMarkOrderReadyForPickupWithBodyWithResponse(ctx context.Context, params *RestaurantMarkOrderReadyForPickupParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RestaurantMarkOrderReadyForPickupClientResponse, error) {
+	rsp, err := c.RestaurantMarkOrderReadyForPickupWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRestaurantMarkOrderReadyForPickupClientResponse(rsp)
+}
+
+func (c *ClientWithResponses) RestaurantMarkOrderReadyForPickupWithResponse(ctx context.Context, params *RestaurantMarkOrderReadyForPickupParams, body RestaurantMarkOrderReadyForPickupJSONRequestBody, reqEditors ...RequestEditorFn) (*RestaurantMarkOrderReadyForPickupClientResponse, error) {
+	rsp, err := c.RestaurantMarkOrderReadyForPickup(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRestaurantMarkOrderReadyForPickupClientResponse(rsp)
 }
 
 // OnboardRestaurantWithBodyWithResponse request with arbitrary body returning *OnboardRestaurantClientResponse
@@ -1387,6 +1675,100 @@ func ParseRegisterCustomerClientResponse(rsp *http.Response) (*RegisterCustomerC
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRestaurantAcceptOrderClientResponse parses an HTTP response from a RestaurantAcceptOrderWithResponse call
+func ParseRestaurantAcceptOrderClientResponse(rsp *http.Response) (*RestaurantAcceptOrderClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RestaurantAcceptOrderClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRestaurantMarkOrderReadyForPickupClientResponse parses an HTTP response from a RestaurantMarkOrderReadyForPickupWithResponse call
+func ParseRestaurantMarkOrderReadyForPickupClientResponse(rsp *http.Response) (*RestaurantMarkOrderReadyForPickupClientResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RestaurantMarkOrderReadyForPickupClientResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
