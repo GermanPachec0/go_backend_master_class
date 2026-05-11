@@ -176,6 +176,163 @@ func registerCourierInCity(
 	}
 }
 
+func placeOrder(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	customerUUID app.CustomerUUID,
+	restaurantUUID app.RestaurantUUID,
+	restaurant ordersclient.OnboardRestaurant,
+	country shared.CountryCode,
+) app.OrderUUID {
+	t.Helper()
+
+	// Select 1-3 random items from the menu
+	numItems := rand.Intn(3) + 1
+	if numItems > len(restaurant.MenuItems) {
+		numItems = len(restaurant.MenuItems)
+	}
+
+	var orderItems []ordersclient.OrderItem
+	for i := 0; i < numItems; i++ {
+		orderItems = append(orderItems, ordersclient.OrderItem{
+			MenuItemUuid: restaurant.MenuItems[i].Uuid,
+			Quantity:     rand.Intn(3) + 1,
+		})
+	}
+
+	createQuoteRequest := ordersclient.CreateQuoteRequest{
+		RestaurantUuid:  restaurantUUID,
+		Items:           orderItems,
+		DeliveryAddress: testutils.GenerateOpenapiAddressInCity(country, restaurant.Address.City),
+	}
+
+	quoteResp, err := clients.Orders.CustomerCreateQuoteWithResponse(
+		ctx,
+		&ordersclient.CustomerCreateQuoteParams{
+			CustomerUUID: customerUUID,
+		},
+		createQuoteRequest,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, quoteResp.StatusCode())
+	require.Equal(t, quoteResp.JSON201.Currency, restaurant.Currency)
+	require.NotNil(t, quoteResp.JSON201)
+	require.False(t, quoteResp.JSON201.DeliveryFeeGross.IsZero())
+	require.False(t, quoteResp.JSON201.ServiceFeeGross.IsZero())
+	require.False(t, quoteResp.JSON201.TotalGross.IsZero())
+
+	_, cardNumber := createBankAccountWithBalance(ctx, t, clients, decimal.NewFromInt(1000), common.NewUUIDv7().String())
+	createBankAccount(ctx, t, clients, restaurantUUID.String())
+	nonce := preauthPayment(
+		ctx,
+		t,
+		clients,
+		cardNumber,
+		quoteResp.JSON201.TotalGross,
+		quoteResp.JSON201.Currency.String(),
+		quoteResp.JSON201.QuoteUuid.String(),
+	)
+
+	placeOrderRequest := ordersclient.PlaceOrder{
+		QuoteUuid:    quoteResp.JSON201.QuoteUuid,
+		PaymentNonce: nonce,
+	}
+
+	orderResp, err := clients.Orders.CustomerPlaceOrderWithResponse(
+		ctx,
+		&ordersclient.CustomerPlaceOrderParams{
+			CustomerUUID: customerUUID,
+		},
+		placeOrderRequest,
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, orderResp.StatusCode())
+
+	assertOrderMatchesQuote(t, orderResp.JSON201, quoteResp.JSON201)
+
+	require.Empty(
+		t,
+		cmp.Diff(
+			&ordersclient.CustomerOrder{
+				CourierAcceptedAt:     nil,
+				CourierUuid:           nil,
+				DeliveredAt:           nil,
+				DeliveryAddress:       createQuoteRequest.DeliveryAddress,
+				DeliveryFeeGross:      quoteResp.JSON201.DeliveryFeeGross,
+				ItemsSubtotalGross:    quoteResp.JSON201.ItemsSubtotalGross,
+				OrderUuid:             orderResp.JSON201.OrderUuid,
+				OrderedAt:             time.Now(),
+				PickedUpAt:            nil,
+				RestaurantConfirmedAt: nil,
+				RestaurantName:        restaurant.Name,
+				RestaurantPreparedAt:  nil,
+				RestaurantUuid:        restaurantUUID,
+				ServiceFeeGross:       quoteResp.JSON201.ServiceFeeGross,
+				TotalGross:            quoteResp.JSON201.TotalGross,
+				TotalTax:              quoteResp.JSON201.TotalTax,
+				Currency:              quoteResp.JSON201.Currency,
+			},
+			orderResp.JSON201,
+			cmpopts.EquateApproxTime(time.Minute),
+			cmpopts.EquateComparable(shared.SharedTypes...),
+		),
+	)
+
+	customerOrdersResp, err := clients.Orders.CustomerGetOrdersWithResponse(ctx, &ordersclient.CustomerGetOrdersParams{
+		CustomerUUID: customerUUID,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, customerOrdersResp.JSON200.Orders, "Expected at least one order for the customer")
+	require.Empty(
+		t,
+		cmp.Diff(
+			*orderResp.JSON201,
+			customerOrdersResp.JSON200.Orders[0],
+			cmpopts.EquateComparable(shared.SharedTypes...),
+			cmpopts.EquateApproxTime(time.Second),
+		),
+	)
+
+	restaurantOrdersResp, err := clients.Orders.RestaurantGetOrdersWithResponse(ctx, &ordersclient.RestaurantGetOrdersParams{
+		RestaurantUUID: restaurantUUID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, restaurantOrdersResp.StatusCode())
+	require.NotEmpty(t, restaurantOrdersResp.JSON200.Orders, "Expected at least one order")
+
+	orderUUID := app.OrderUUID{common.NewUUIDv7()}
+	for _, order := range restaurantOrdersResp.JSON200.Orders {
+		if order.CustomerUuid == customerUUID {
+			orderUUID = order.OrderUuid
+			break
+		}
+	}
+	require.NotEqual(t, openapi_types.UUID{}, orderUUID, "Placed order not found in restaurant's order list")
+
+	return orderUUID
+}
+
+func assertOrderVisibleToRestaurant(ctx context.Context, t *testing.T, clients testClients, restaurantUUID app.RestaurantUUID, orderUUID app.OrderUUID) {
+	t.Helper()
+
+	resp, err := clients.Orders.RestaurantGetOrdersWithResponse(ctx, &ordersclient.RestaurantGetOrdersParams{
+		RestaurantUUID: restaurantUUID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode())
+
+	// Verify the specific order is in the list
+	found := false
+	for _, order := range resp.JSON200.Orders {
+		if order.OrderUuid == orderUUID {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "Order %s should be visible to restaurant", orderUUID)
+}
+
 func restaurantAcceptOrder(ctx context.Context, t *testing.T, clients testClients, restaurantUUID app.RestaurantUUID, orderUUID app.OrderUUID) {
 	t.Helper()
 
@@ -190,6 +347,26 @@ func restaurantAcceptOrder(ctx context.Context, t *testing.T, clients testClient
 	)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusAccepted, resp.StatusCode())
+}
+
+func assertOrderVisibleToCourier(ctx context.Context, t *testing.T, clients testClients, courierUUID app.CourierUUID, orderUUID app.OrderUUID) {
+	t.Helper()
+
+	resp, err := clients.Orders.CourierGetAvailableOrdersWithResponse(ctx, &ordersclient.CourierGetAvailableOrdersParams{
+		CourierUUID: courierUUID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode())
+
+	// Verify the specific order is in the list
+	found := false
+	for _, order := range resp.JSON200.Orders {
+		if order.OrderUuid == orderUUID {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "Order %s should be visible to courier", orderUUID)
 }
 
 func courierAcceptDelivery(ctx context.Context, t *testing.T, clients testClients, courierUUID app.CourierUUID, orderUUID app.OrderUUID) {
@@ -224,6 +401,28 @@ func restaurantMarkOrderReady(ctx context.Context, t *testing.T, clients testCli
 	require.Equal(t, http.StatusAccepted, resp.StatusCode())
 }
 
+func assertOrderReadyForCourier(ctx context.Context, t *testing.T, clients testClients, courierUUID app.CourierUUID, orderUUID app.OrderUUID) {
+	t.Helper()
+
+	resp, err := clients.Orders.CourierGetCurrentOrdersWithResponse(ctx, &ordersclient.CourierGetCurrentOrdersParams{
+		CourierUUID: courierUUID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode())
+
+	// Find the specific order and verify it's marked as ready
+	found := false
+	for _, order := range resp.JSON200.Orders {
+		if order.OrderUuid == orderUUID {
+			require.NotNil(t, order.RestaurantPreparedAt, "Order should be marked as ready")
+			found = true
+			break
+		}
+	}
+
+	require.True(t, found, "Order %s not found in courier's order list", orderUUID)
+}
+
 func courierReportPickup(
 	ctx context.Context,
 	t *testing.T,
@@ -246,6 +445,34 @@ func courierReportPickup(
 	require.Equal(t, http.StatusAccepted, resp.StatusCode())
 }
 
+func assertPickupReported(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	courierUUID app.CourierUUID,
+	orderUUID app.OrderUUID,
+) {
+	t.Helper()
+
+	resp, err := clients.Orders.CourierGetCurrentOrdersWithResponse(ctx, &ordersclient.CourierGetCurrentOrdersParams{
+		CourierUUID: courierUUID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode())
+
+	// Find the specific order and verify it's marked as picked up
+	found := false
+	for _, order := range resp.JSON200.Orders {
+		if order.OrderUuid == orderUUID {
+			require.NotNil(t, order.PickedUpAt, "Order should be marked as picked up")
+			found = true
+			break
+		}
+	}
+
+	require.True(t, found, "Order %s not found in courier's order list", orderUUID)
+}
+
 func courierReportDelivered(
 	ctx context.Context,
 	t *testing.T,
@@ -266,6 +493,34 @@ func courierReportDelivered(
 	)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusAccepted, resp.StatusCode())
+}
+
+func assertDeliveryReported(
+	ctx context.Context,
+	t *testing.T,
+	clients testClients,
+	courierUUID app.CourierUUID,
+	orderUUID app.OrderUUID,
+) {
+	t.Helper()
+
+	resp, err := clients.Orders.CourierGetCurrentOrdersWithResponse(ctx, &ordersclient.CourierGetCurrentOrdersParams{
+		CourierUUID: courierUUID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode())
+
+	// Find the specific order and verify it's marked as delivered
+	found := false
+	for _, order := range resp.JSON200.Orders {
+		if order.OrderUuid == orderUUID {
+			require.NotNil(t, order.DeliveredAt, "Order should be marked as delivered")
+			found = true
+			break
+		}
+	}
+
+	require.True(t, found, "Order %s not found in courier's order list", orderUUID)
 }
 
 func updateRestaurantMenu(

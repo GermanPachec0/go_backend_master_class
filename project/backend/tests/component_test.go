@@ -8,11 +8,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"eats/backend/common"
+	"eats/backend/common/shared"
 	"eats/backend/common/testutils"
 	ordersclient "eats/backend/orders/api/http/client"
 )
@@ -32,28 +35,27 @@ func TestComponent_CriticalFlow(t *testing.T) {
 
 	customerUUID := registerCustomerInCity(ctx, t, clients, country, restaurant.Data.Address.City)
 
-	orderItems := []ordersclient.OrderItem{
-		{
-			MenuItemUuid: restaurant.Data.MenuItems[0].Uuid,
-			Quantity:     2,
-		},
-	}
-	deliveryAddress := testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City)
-	quote := createQuote(ctx, t, clients, customerUUID, restaurant.UUID, orderItems, deliveryAddress)
+	orderUUID := placeOrder(ctx, t, clients, customerUUID, restaurant.UUID, restaurant.Data, country)
 
-	order := placeOrderFromQuote(ctx, t, clients, customerUUID, restaurant.UUID, quote)
-	require.NotEmpty(t, order.OrderUuid)
-	assertOrderMatchesQuote(t, order, quote)
+	assertOrderVisibleToRestaurant(ctx, t, clients, restaurant.UUID, orderUUID)
 
-	restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+	restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, orderUUID)
 
-	courierAcceptDelivery(ctx, t, clients, courier.UUID, order.OrderUuid)
+	assertOrderVisibleToCourier(ctx, t, clients, courier.UUID, orderUUID)
 
-	restaurantMarkOrderReady(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+	courierAcceptDelivery(ctx, t, clients, courier.UUID, orderUUID)
 
-	courierReportPickup(ctx, t, clients, courier.UUID, order.OrderUuid)
+	restaurantMarkOrderReady(ctx, t, clients, restaurant.UUID, orderUUID)
 
-	courierReportDelivered(ctx, t, clients, courier.UUID, order.OrderUuid)
+	assertOrderReadyForCourier(ctx, t, clients, courier.UUID, orderUUID)
+
+	courierReportPickup(ctx, t, clients, courier.UUID, orderUUID)
+
+	assertPickupReported(ctx, t, clients, courier.UUID, orderUUID)
+
+	courierReportDelivered(ctx, t, clients, courier.UUID, orderUUID)
+
+	assertDeliveryReported(ctx, t, clients, courier.UUID, orderUUID)
 }
 
 func TestComponent_ListMenuItems(t *testing.T) {
@@ -324,18 +326,42 @@ func TestComponent_CourierCityFiltering(t *testing.T) {
 	differentCity := restaurant.Data.Address.City + "_Different"
 	courierInDifferentCity := registerCourierInCity(ctx, t, clients, country, differentCity)
 
-	// Create and place order
-	orderItems := []ordersclient.OrderItem{
-		{
-			MenuItemUuid: restaurant.Data.MenuItems[0].Uuid,
-			Quantity:     1,
-		},
-	}
-	deliveryAddress := testutils.GenerateOpenapiAddressInCity(country, restaurant.Data.Address.City)
-	quote := createQuote(ctx, t, clients, customerUUID, restaurant.UUID, orderItems, deliveryAddress)
-	order := placeOrderFromQuote(ctx, t, clients, customerUUID, restaurant.UUID, quote)
+	orderUUID := placeOrder(ctx, t, clients, customerUUID, restaurant.UUID, restaurant.Data, country)
 
-	restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, order.OrderUuid)
+	restaurantAcceptOrder(ctx, t, clients, restaurant.UUID, orderUUID)
+
+	t.Run("courier_in_same_city_sees_available_order", func(t *testing.T) {
+		resp, err := clients.Orders.CourierGetAvailableOrdersWithResponse(ctx, &ordersclient.CourierGetAvailableOrdersParams{
+			CourierUUID: courierInSameCity.UUID,
+		})
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode())
+		require.NotNil(t, resp.JSON200)
+
+		// Should see at least the order we created
+		found := false
+		for _, order := range resp.JSON200.Orders {
+			if order.OrderUuid == orderUUID {
+				found = true
+				break
+			}
+		}
+		require.True(t, found, "Courier in same city should see the available order")
+	})
+
+	t.Run("courier_in_different_city_does_not_see_order", func(t *testing.T) {
+		resp, err := clients.Orders.CourierGetAvailableOrdersWithResponse(ctx, &ordersclient.CourierGetAvailableOrdersParams{
+			CourierUUID: courierInDifferentCity.UUID,
+		})
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode())
+		require.NotNil(t, resp.JSON200)
+
+		// Should not see the order in different city
+		for _, order := range resp.JSON200.Orders {
+			require.NotEqual(t, orderUUID, order.OrderUuid, "Courier in different city should not see orders from other cities")
+		}
+	})
 
 	t.Run("courier_from_different_city_cannot_accept_order", func(t *testing.T) {
 		resp, err := clients.Orders.CourierAcceptDeliveryWithResponse(
@@ -344,7 +370,7 @@ func TestComponent_CourierCityFiltering(t *testing.T) {
 				CourierUUID: courierInDifferentCity.UUID,
 			},
 			ordersclient.CourierAcceptDeliveryJSONRequestBody{
-				OrderUuid: order.OrderUuid,
+				OrderUuid: orderUUID,
 			},
 		)
 		require.NoError(t, err)
@@ -373,7 +399,7 @@ func TestComponent_CourierCityFiltering(t *testing.T) {
 				CourierUUID: courierInSameCity.UUID,
 			},
 			ordersclient.CourierAcceptDeliveryJSONRequestBody{
-				OrderUuid: order.OrderUuid,
+				OrderUuid: orderUUID,
 			},
 		)
 		require.NoError(t, err)
@@ -489,6 +515,70 @@ func TestComponent_SecondCourierCannotAcceptSameOrder(t *testing.T) {
 		"second courier should not be able to accept an already-accepted order")
 	require.NotNil(t, resp.JSON409)
 	assert.Equal(t, "already-accepted", resp.JSON409.Slug)
+}
+
+func TestComponent_ListRestaurants(t *testing.T) {
+	t.Parallel()
+	clients := newTestClients(t)
+
+	ctx := t.Context()
+
+	country := testutils.GenerateRandomCountry()
+
+	restaurant1 := onboardRestaurant(ctx, t, clients, country)
+	restaurant2 := onboardRestaurant(ctx, t, clients, country)
+	restaurant3 := onboardRestaurant(ctx, t, clients, country)
+
+	customerUUID := registerCustomer(ctx, t, clients, country)
+
+	resp, err := clients.Orders.CustomerListRestaurantsWithResponse(ctx, &ordersclient.CustomerListRestaurantsParams{
+		CustomerUUID: customerUUID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode())
+	require.NotNil(t, resp.JSON200)
+	require.GreaterOrEqual(t, len(resp.JSON200.Restaurants), 3, "Expected at least 3 restaurants")
+
+	expectedRestaurants := []ordersclient.Restaurant{
+		{
+			Uuid:        restaurant1.UUID,
+			Name:        restaurant1.Data.Name,
+			Description: restaurant1.Data.Description,
+			Address:     restaurant1.Data.Address,
+		},
+		{
+			Uuid:        restaurant2.UUID,
+			Name:        restaurant2.Data.Name,
+			Description: restaurant2.Data.Description,
+			Address:     restaurant2.Data.Address,
+		},
+		{
+			Uuid:        restaurant3.UUID,
+			Name:        restaurant3.Data.Name,
+			Description: restaurant3.Data.Description,
+			Address:     restaurant3.Data.Address,
+		},
+	}
+
+	// Filter actual restaurants to only include the ones we created
+	var actualRestaurants []ordersclient.Restaurant
+	for _, r := range resp.JSON200.Restaurants {
+		if r.Uuid == restaurant1.UUID || r.Uuid == restaurant2.UUID || r.Uuid == restaurant3.UUID {
+			actualRestaurants = append(actualRestaurants, r)
+		}
+	}
+
+	require.Empty(
+		t,
+		cmp.Diff(
+			expectedRestaurants,
+			actualRestaurants,
+			cmpopts.SortSlices(func(a, b ordersclient.Restaurant) bool {
+				return a.Uuid.String() < b.Uuid.String()
+			}),
+			cmpopts.EquateComparable(shared.SharedTypes...),
+		),
+	)
 }
 
 func TestComponent_MenuItemArchival(t *testing.T) {
