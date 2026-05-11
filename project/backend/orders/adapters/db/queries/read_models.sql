@@ -37,3 +37,15 @@ ORDER BY
     CASE WHEN sqlc.narg(order_by)::text = 'price_desc' THEN mi.gross_price END DESC,
     CASE WHEN sqlc.narg(order_by)::text = 'name_asc' THEN mi.name END ASC,
     CASE WHEN sqlc.narg(order_by)::text = 'name_desc' THEN mi.name END DESC;
+
+
+-- name: ListRestaurants :many
+SELECT
+    restaurant_uuid,
+    name,
+    description,
+    address,
+    currency
+FROM orders.restaurants
+ORDER BY name ASC
+;

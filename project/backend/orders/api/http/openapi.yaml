@@ -714,6 +714,7 @@ components:
         - name
         - description
         - address
+        - currency
       properties:
         uuid:
           $ref: '#/components/schemas/RestaurantUUID'
@@ -725,6 +726,8 @@ components:
           description: Restaurant description
         address:
           $ref: '#/components/schemas/Address'
+        currency:
+          $ref: '#/components/schemas/Currency'
 
     MenuItem:
       type: object

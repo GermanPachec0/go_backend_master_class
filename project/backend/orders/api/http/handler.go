@@ -20,6 +20,9 @@ type ListMenuItemsFilter struct {
 // It is defined here (consumer side) to allow for easy testing and decoupling.
 type ReadModel interface {
 	ListMenuItemsWithRestaurant(ctx context.Context, filter ListMenuItemsFilter) ([]MenuItemWithRestaurant, error)
+	ListRestaurants(ctx context.Context) ([]Restaurant, error)
+	CustomerGetRestaurantMenu(ctx context.Context, restaurantUUID app.RestaurantUUID) ([]MenuItem, error)
+	CustomerGetRestaurant(ctx context.Context, restaurantUUID app.RestaurantUUID) (Restaurant, error)
 }
 
 type RestaurantReader interface {
@@ -332,6 +335,37 @@ func (h Handler) CourierReportDelivery(ctx context.Context, request CourierRepor
 	}
 
 	return CourierReportDelivery202Response{}, nil
+}
+
+func (h Handler) CustomerListRestaurants(ctx context.Context, request CustomerListRestaurantsRequestObject) (CustomerListRestaurantsResponseObject, error) {
+	restaurants, err := h.readModel.ListRestaurants(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return CustomerListRestaurants200JSONResponse{
+		Restaurants: restaurants,
+	}, nil
+}
+
+func (h Handler) CustomerGetRestaurantMenu(ctx context.Context, request CustomerGetRestaurantMenuRequestObject) (CustomerGetRestaurantMenuResponseObject, error) {
+	restaurant, err := h.readModel.CustomerGetRestaurant(ctx, request.RestaurantUuid)
+	if err != nil {
+		return nil, err
+	}
+
+	menuItems, err := h.readModel.CustomerGetRestaurantMenu(ctx, request.RestaurantUuid)
+	if err != nil {
+		return nil, err
+	}
+	return CustomerGetRestaurantMenu200JSONResponse{
+		RestaurantName: restaurant.Name,
+		Address:        restaurant.Address,
+		Currency:       restaurant.Currency,
+		Description:    restaurant.Description,
+		RestaurantUuid: request.RestaurantUuid,
+		Items:          menuItems,
+	}, nil
 }
 
 func Register(ctx context.Context, e EchoRouter, handler Handler) error {

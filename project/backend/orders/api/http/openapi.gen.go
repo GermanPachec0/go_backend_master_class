@@ -287,6 +287,23 @@ type ReportPickup struct {
 	OrderUuid OrderUUID `json:"order_uuid"`
 }
 
+// Restaurant defines model for Restaurant.
+type Restaurant struct {
+	Address Address `json:"address"`
+
+	// Currency Currency code in ISO 4217 format
+	Currency Currency `json:"currency"`
+
+	// Description Restaurant description
+	Description string `json:"description"`
+
+	// Name Restaurant name
+	Name string `json:"name"`
+
+	// Uuid UUID of a restaurant
+	Uuid RestaurantUUID `json:"uuid"`
+}
+
 // RestaurantUUID UUID of a restaurant
 type RestaurantUUID = app.RestaurantUUID
 
@@ -334,6 +351,18 @@ type CustomerCreateQuoteParams struct {
 
 // CustomerPlaceOrderParams defines parameters for CustomerPlaceOrder.
 type CustomerPlaceOrderParams struct {
+	// CustomerUUID Customer UUID
+	CustomerUUID CustomerUUID `json:"Customer-UUID"`
+}
+
+// CustomerListRestaurantsParams defines parameters for CustomerListRestaurants.
+type CustomerListRestaurantsParams struct {
+	// CustomerUUID Customer UUID
+	CustomerUUID CustomerUUID `json:"Customer-UUID"`
+}
+
+// CustomerGetRestaurantMenuParams defines parameters for CustomerGetRestaurantMenu.
+type CustomerGetRestaurantMenuParams struct {
 	// CustomerUUID Customer UUID
 	CustomerUUID CustomerUUID `json:"Customer-UUID"`
 }
@@ -417,6 +446,12 @@ type ServerInterface interface {
 	// Place a new order using an order offer
 	// (POST /orders/customer/place-order)
 	CustomerPlaceOrder(ctx echo.Context, params CustomerPlaceOrderParams) error
+	// List all restaurants
+	// (GET /orders/customer/restaurants)
+	CustomerListRestaurants(ctx echo.Context, params CustomerListRestaurantsParams) error
+	// Get restaurant menu
+	// (GET /orders/customer/{restaurant_uuid}/menu)
+	CustomerGetRestaurantMenu(ctx echo.Context, restaurantUuid RestaurantUUID, params CustomerGetRestaurantMenuParams) error
 	// Register a new courier
 	// (POST /orders/register-courier)
 	RegisterCourier(ctx echo.Context) error
@@ -594,6 +629,75 @@ func (w *ServerInterfaceWrapper) CustomerPlaceOrder(ctx echo.Context) error {
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.CustomerPlaceOrder(ctx, params)
+	return err
+}
+
+// CustomerListRestaurants converts echo context to params.
+func (w *ServerInterfaceWrapper) CustomerListRestaurants(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CustomerListRestaurantsParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Customer-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Customer-UUID")]; found {
+		var CustomerUUID CustomerUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Customer-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Customer-UUID", valueList[0], &CustomerUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Customer-UUID: %s", err))
+		}
+
+		params.CustomerUUID = CustomerUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Customer-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.CustomerListRestaurants(ctx, params)
+	return err
+}
+
+// CustomerGetRestaurantMenu converts echo context to params.
+func (w *ServerInterfaceWrapper) CustomerGetRestaurantMenu(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "restaurant_uuid" -------------
+	var restaurantUuid RestaurantUUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "restaurant_uuid", ctx.Param("restaurant_uuid"), &restaurantUuid, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter restaurant_uuid: %s", err))
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CustomerGetRestaurantMenuParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Customer-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Customer-UUID")]; found {
+		var CustomerUUID CustomerUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Customer-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Customer-UUID", valueList[0], &CustomerUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Customer-UUID: %s", err))
+		}
+
+		params.CustomerUUID = CustomerUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Customer-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.CustomerGetRestaurantMenu(ctx, restaurantUuid, params)
 	return err
 }
 
@@ -780,6 +884,8 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 	router.POST(baseURL+"/orders/courier/report-pickup", wrapper.CourierReportPickup)
 	router.POST(baseURL+"/orders/customer/create-quote", wrapper.CustomerCreateQuote)
 	router.POST(baseURL+"/orders/customer/place-order", wrapper.CustomerPlaceOrder)
+	router.GET(baseURL+"/orders/customer/restaurants", wrapper.CustomerListRestaurants)
+	router.GET(baseURL+"/orders/customer/:restaurant_uuid/menu", wrapper.CustomerGetRestaurantMenu)
 	router.POST(baseURL+"/orders/register-courier", wrapper.RegisterCourier)
 	router.POST(baseURL+"/orders/register-customer", wrapper.RegisterCustomer)
 	router.POST(baseURL+"/orders/restaurant/accept-order", wrapper.RestaurantAcceptOrder)
@@ -1095,6 +1201,81 @@ func (response CustomerPlaceOrder410JSONResponse) VisitCustomerPlaceOrderRespons
 	return json.NewEncoder(w).Encode(response)
 }
 
+type CustomerListRestaurantsRequestObject struct {
+	Params CustomerListRestaurantsParams
+}
+
+type CustomerListRestaurantsResponseObject interface {
+	VisitCustomerListRestaurantsResponse(w http.ResponseWriter) error
+}
+
+type CustomerListRestaurants200JSONResponse struct {
+	Restaurants []Restaurant `json:"restaurants"`
+}
+
+func (response CustomerListRestaurants200JSONResponse) VisitCustomerListRestaurantsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CustomerListRestaurants401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CustomerListRestaurants401JSONResponse) VisitCustomerListRestaurantsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CustomerGetRestaurantMenuRequestObject struct {
+	RestaurantUuid RestaurantUUID `json:"restaurant_uuid"`
+	Params         CustomerGetRestaurantMenuParams
+}
+
+type CustomerGetRestaurantMenuResponseObject interface {
+	VisitCustomerGetRestaurantMenuResponse(w http.ResponseWriter) error
+}
+
+type CustomerGetRestaurantMenu200JSONResponse struct {
+	Address Address `json:"address"`
+
+	// Currency Currency code in ISO 4217 format
+	Currency       Currency   `json:"currency"`
+	Description    string     `json:"description"`
+	Items          []MenuItem `json:"items"`
+	RestaurantName string     `json:"restaurant_name"`
+
+	// RestaurantUuid UUID of a restaurant
+	RestaurantUuid RestaurantUUID `json:"restaurant_uuid"`
+}
+
+func (response CustomerGetRestaurantMenu200JSONResponse) VisitCustomerGetRestaurantMenuResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CustomerGetRestaurantMenu401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CustomerGetRestaurantMenu401JSONResponse) VisitCustomerGetRestaurantMenuResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CustomerGetRestaurantMenu404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response CustomerGetRestaurantMenu404JSONResponse) VisitCustomerGetRestaurantMenuResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type RegisterCourierRequestObject struct {
 	Body *RegisterCourierJSONRequestBody
 }
@@ -1341,6 +1522,12 @@ type StrictServerInterface interface {
 	// Place a new order using an order offer
 	// (POST /orders/customer/place-order)
 	CustomerPlaceOrder(ctx context.Context, request CustomerPlaceOrderRequestObject) (CustomerPlaceOrderResponseObject, error)
+	// List all restaurants
+	// (GET /orders/customer/restaurants)
+	CustomerListRestaurants(ctx context.Context, request CustomerListRestaurantsRequestObject) (CustomerListRestaurantsResponseObject, error)
+	// Get restaurant menu
+	// (GET /orders/customer/{restaurant_uuid}/menu)
+	CustomerGetRestaurantMenu(ctx context.Context, request CustomerGetRestaurantMenuRequestObject) (CustomerGetRestaurantMenuResponseObject, error)
 	// Register a new courier
 	// (POST /orders/register-courier)
 	RegisterCourier(ctx context.Context, request RegisterCourierRequestObject) (RegisterCourierResponseObject, error)
@@ -1522,6 +1709,57 @@ func (sh *strictHandler) CustomerPlaceOrder(ctx echo.Context, params CustomerPla
 		return err
 	} else if validResponse, ok := response.(CustomerPlaceOrderResponseObject); ok {
 		return validResponse.VisitCustomerPlaceOrderResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// CustomerListRestaurants operation middleware
+func (sh *strictHandler) CustomerListRestaurants(ctx echo.Context, params CustomerListRestaurantsParams) error {
+	var request CustomerListRestaurantsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.CustomerListRestaurants(ctx.Request().Context(), request.(CustomerListRestaurantsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CustomerListRestaurants")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(CustomerListRestaurantsResponseObject); ok {
+		return validResponse.VisitCustomerListRestaurantsResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// CustomerGetRestaurantMenu operation middleware
+func (sh *strictHandler) CustomerGetRestaurantMenu(ctx echo.Context, restaurantUuid RestaurantUUID, params CustomerGetRestaurantMenuParams) error {
+	var request CustomerGetRestaurantMenuRequestObject
+
+	request.RestaurantUuid = restaurantUuid
+	request.Params = params
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.CustomerGetRestaurantMenu(ctx.Request().Context(), request.(CustomerGetRestaurantMenuRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CustomerGetRestaurantMenu")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(CustomerGetRestaurantMenuResponseObject); ok {
+		return validResponse.VisitCustomerGetRestaurantMenuResponse(ctx.Response())
 	} else if response != nil {
 		return fmt.Errorf("unexpected response type: %T", response)
 	}
