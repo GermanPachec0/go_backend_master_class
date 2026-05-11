@@ -135,6 +135,45 @@ paths:
         '410':
           $ref: '#/components/responses/Gone'
 
+  /orders/customer/orders:
+    get:
+      summary: List customer orders
+      operationId: customerGetOrders
+      tags:
+        - customer
+      parameters:
+        - name: Customer-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/CustomerUUID'
+          description: Customer UUID
+      responses:
+        '200':
+          description: List of customer orders
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - orders
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CustomerOrder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+
+
   /orders/restaurant/accept-order:
     post:
       summary: Restaurant accepts an order
@@ -166,6 +205,36 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /orders/restaurant/orders:
+    get:
+      summary: List orders for restaurant
+      operationId: restaurantGetOrders
+      tags:
+        - restaurant
+      parameters:
+        - name: Restaurant-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/RestaurantUUID'
+          description: Restaurant UUID
+      responses:
+        '200':
+          description: List of restaurant orders
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - orders
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RestaurantOrder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /orders/restaurant/mark-order-ready-for-pickup:
     post:
       summary: Restaurant marks order as ready for pickup
@@ -196,6 +265,66 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /orders/courier/available-orders:
+    get:
+      summary: List orders available for delivery
+      operationId: courierGetAvailableOrders
+      tags:
+        - courier
+      parameters:
+        - name: Courier-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/CourierUUID'
+          description: Courier UUID
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - orders
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CourierOrder'
+          description: List of available orders
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /orders/courier/current-orders:
+    get:
+      summary: List current orders assigned to courier
+      operationId: courierGetCurrentOrders
+      tags:
+        - courier
+      parameters:
+        - name: Courier-UUID
+          in: header
+          required: true
+          schema:
+            $ref: '#/components/schemas/CourierUUID'
+          description: Courier UUID
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - orders
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CourierOrder'
+          description: List of current orders
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /orders/courier/accept-delivery:
     post:
@@ -663,6 +792,54 @@ components:
         order_uuid:
           $ref: '#/components/schemas/OrderUUID'
 
+    RestaurantOrder:
+      type: object
+      required:
+        - order_uuid
+        - customer_uuid
+        - ordered_at
+        - items_subtotal_gross
+      properties:
+        order_uuid:
+          $ref: '#/components/schemas/OrderUUID'
+        customer_uuid:
+          $ref: '#/components/schemas/CustomerUUID'
+        courier_uuid:
+          allOf:
+            - $ref: '#/components/schemas/CourierUUID'
+          nullable: true
+        ordered_at:
+          type: string
+          format: date-time
+          description: When the order was placed
+        restaurant_confirmed_at:
+          type: string
+          format: date-time
+          description: When the restaurant confirmed the order
+          nullable: true
+        courier_accepted_at:
+          type: string
+          format: date-time
+          description: When the courier accepted the order
+          nullable: true
+        restaurant_prepared_at:
+          type: string
+          format: date-time
+          description: When the order was marked ready for pickup
+          nullable: true
+        picked_up_at:
+          type: string
+          format: date-time
+          description: When the order was picked up
+          nullable: true
+        delivered_at:
+          type: string
+          format: date-time
+          description: When the order was delivered
+          nullable: true
+        items_subtotal_gross:
+          $ref: '#/components/schemas/Decimal'
+
     MarkOrderReady:
       type: object
       required:
@@ -678,6 +855,65 @@ components:
       properties:
         order_uuid:
           $ref: '#/components/schemas/OrderUUID'
+
+    CourierOrder:
+      type: object
+      required:
+        - order_uuid
+        - customer_uuid
+        - ordered_at
+        - items_subtotal_gross
+        - delivery_address
+        - restaurant_uuid
+        - restaurant_name
+      properties:
+        order_uuid:
+          $ref: '#/components/schemas/OrderUUID'
+        customer_uuid:
+          $ref: '#/components/schemas/CustomerUUID'
+        courier_uuid:
+          allOf:
+            - $ref: '#/components/schemas/CourierUUID'
+          nullable: true
+        ordered_at:
+          type: string
+          format: date-time
+          description: When the order was placed
+        restaurant_confirmed_at:
+          type: string
+          format: date-time
+          description: When the restaurant confirmed the order
+          nullable: true
+        accepted_by_courier_at:
+          type: string
+          format: date-time
+          description: When the courier accepted the order
+          nullable: true
+        restaurant_prepared_at:
+          type: string
+          format: date-time
+          description: When the order was marked ready for pickup
+          nullable: true
+        picked_up_at:
+          type: string
+          format: date-time
+          description: When the order was picked up
+          nullable: true
+        delivered_at:
+          type: string
+          format: date-time
+          description: When the order was delivered
+          nullable: true
+        items_subtotal_gross:
+          $ref: '#/components/schemas/Decimal'
+        delivery_address:
+          $ref: '#/components/schemas/Address'
+        restaurant_uuid:
+          $ref: '#/components/schemas/RestaurantUUID'
+        restaurant_name:
+          type: string
+          description: Name of the restaurant
+
 
     ReportPickup:
       type: object
