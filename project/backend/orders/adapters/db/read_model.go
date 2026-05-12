@@ -126,3 +126,149 @@ func (r ReadModel) CustomerGetRestaurant(ctx context.Context, restaurantUUID app
 		Currency:    row.Currency,
 	}, nil
 }
+
+func (r ReadModel) ListCustomerOrders(ctx context.Context, customerUUID app.CustomerUUID) ([]http.CustomerOrder, error) {
+	queries := dbmodels.New(r.db)
+
+	rows, err := queries.ListCustomerOrders(ctx, customerUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query customer orders: %w", err)
+	}
+
+	orders := make([]http.CustomerOrder, 0, len(rows))
+	for _, row := range rows {
+		restaurantName, err := queries.GetRestaurantName(ctx, row.RestaurantUuid)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query restaurant name for order %s: %w", row.OrderUuid.String(), err)
+		}
+
+		deliveryAddress := http.Address{
+			CountryCode: row.DeliveryAddress.CountryCode,
+			City:        row.DeliveryAddress.City,
+			Line1:       row.DeliveryAddress.Line1,
+			Line2:       row.DeliveryAddress.Line2,
+			PostalCode:  row.DeliveryAddress.PostalCode,
+		}
+
+		orders = append(orders, http.CustomerOrder{
+			CourierAcceptedAt:     row.CourierAcceptedAt,
+			CourierUuid:           row.CourierUuid,
+			Currency:              row.Currency,
+			DeliveredAt:           row.DeliveredAt,
+			DeliveryAddress:       deliveryAddress,
+			DeliveryFeeGross:      row.DeliveryFeeGross,
+			ItemsSubtotalGross:    row.ItemsSubtotalGross,
+			OrderUuid:             row.OrderUuid,
+			OrderedAt:             row.OrderedAt,
+			PickedUpAt:            row.PickedUpAt,
+			RestaurantConfirmedAt: row.RestaurantConfirmedAt,
+			RestaurantName:        restaurantName,
+			RestaurantPreparedAt:  row.RestaurantPreparedAt,
+			RestaurantUuid:        row.RestaurantUuid,
+			ServiceFeeGross:       row.ServiceFeeGross,
+			TotalGross:            row.TotalAmountGross,
+			TotalTax:              row.TotalTax,
+		})
+	}
+
+	return orders, nil
+}
+
+func (r ReadModel) ListRestaurantOrders(ctx context.Context, restaurantUUID app.RestaurantUUID) ([]http.RestaurantOrder, error) {
+	queries := dbmodels.New(r.db)
+
+	rows, err := queries.ListRestaurantOrders(ctx, restaurantUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query restaurant orders: %w", err)
+	}
+
+	orders := make([]http.RestaurantOrder, 0, len(rows))
+	for _, row := range rows {
+		orders = append(orders, http.RestaurantOrder{
+			CourierAcceptedAt:     row.CourierAcceptedAt,
+			CourierUuid:           row.CourierUuid,
+			DeliveredAt:           row.DeliveredAt,
+			ItemsSubtotalGross:    row.ItemsSubtotalGross,
+			OrderUuid:             row.OrderUuid,
+			OrderedAt:             row.OrderedAt,
+			PickedUpAt:            row.PickedUpAt,
+			RestaurantConfirmedAt: row.RestaurantConfirmedAt,
+			RestaurantPreparedAt:  row.RestaurantPreparedAt,
+			CustomerUuid:          row.CustomerUuid,
+		})
+	}
+
+	return orders, nil
+}
+
+func (r ReadModel) ListAssignedCourierOrders(ctx context.Context, courierUUID app.CourierUUID) ([]http.CourierOrder, error) {
+	queries := dbmodels.New(r.db)
+
+	rows, err := queries.ListAssignedCourierOrders(ctx, &courierUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query assigned courier orders: %w", err)
+	}
+
+	orders := make([]http.CourierOrder, 0, len(rows))
+	for _, row := range rows {
+		orders = append(orders, http.CourierOrder{
+			AcceptedByCourierAt:   row.CourierAcceptedAt,
+			DeliveredAt:           row.DeliveredAt,
+			OrderUuid:             row.OrderUuid,
+			OrderedAt:             row.OrderedAt,
+			PickedUpAt:            row.PickedUpAt,
+			RestaurantConfirmedAt: row.RestaurantConfirmedAt,
+			RestaurantPreparedAt:  row.RestaurantPreparedAt,
+			CustomerUuid:          row.CustomerUuid,
+			RestaurantUuid:        row.RestaurantUuid,
+			CourierUuid:           row.CourierUuid,
+			DeliveryAddress: http.Address{
+				City:        row.DeliveryAddress.City,
+				CountryCode: row.DeliveryAddress.CountryCode,
+				Line1:       row.DeliveryAddress.Line1,
+				Line2:       row.DeliveryAddress.Line2,
+				PostalCode:  row.DeliveryAddress.PostalCode,
+			},
+			ItemsSubtotalGross: row.ItemsSubtotalGross,
+			RestaurantName:     row.RestaurantName,
+		})
+	}
+
+	return orders, nil
+}
+
+func (r ReadModel) ListAvailableOrdersForCourier(ctx context.Context, courierUUID app.CourierUUID) ([]http.CourierOrder, error) {
+	queries := dbmodels.New(r.db)
+
+	rows, err := queries.ListAvailableOrdersForCourier(ctx, courierUUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query available orders for courier: %w", err)
+	}
+
+	orders := make([]http.CourierOrder, 0, len(rows))
+	for _, row := range rows {
+		orders = append(orders, http.CourierOrder{
+			OrderUuid:             row.OrderUuid,
+			OrderedAt:             row.OrderedAt,
+			RestaurantConfirmedAt: row.RestaurantConfirmedAt,
+			RestaurantPreparedAt:  row.RestaurantPreparedAt,
+			CustomerUuid:          row.CustomerUuid,
+			RestaurantUuid:        row.RestaurantUuid,
+			RestaurantName:        row.RestaurantName,
+			AcceptedByCourierAt:   row.CourierAcceptedAt,
+			CourierUuid:           row.CourierUuid,
+			DeliveredAt:           row.DeliveredAt,
+			PickedUpAt:            row.PickedUpAt,
+			ItemsSubtotalGross:    row.ItemsSubtotalGross,
+			DeliveryAddress: http.Address{
+				City:        row.DeliveryAddress.City,
+				CountryCode: row.DeliveryAddress.CountryCode,
+				Line1:       row.DeliveryAddress.Line1,
+				Line2:       row.DeliveryAddress.Line2,
+				PostalCode:  row.DeliveryAddress.PostalCode,
+			},
+		})
+	}
+
+	return orders, nil
+}

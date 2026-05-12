@@ -49,3 +49,33 @@ SELECT
 FROM orders.restaurants
 ORDER BY name ASC
 ;
+
+-- name: ListCustomerOrders :many
+SELECT orders.* FROM orders.orders as orders
+WHERE customer_uuid = $1
+ORDER BY orders.ordered_at DESC
+;
+
+-- name: ListRestaurantOrders :many
+SELECT orders.* FROM orders.orders as orders
+WHERE restaurant_uuid = $1
+;
+
+-- name: ListAssignedCourierOrders :many
+SELECT orders.*, restaurants.name AS restaurant_name FROM orders.orders as orders
+INNER JOIN orders.restaurants ON orders.restaurant_uuid = restaurants.restaurant_uuid
+WHERE courier_uuid = $1 
+;
+
+-- name: ListAvailableOrdersForCourier :many
+SELECT orders.* , restaurants.name AS restaurant_name
+FROM orders.orders as orders
+INNER JOIN orders.couriers ON couriers.courier_uuid = $1
+INNER JOIN orders.restaurants ON orders.restaurant_uuid = restaurants.restaurant_uuid
+WHERE orders.restaurant_confirmed_at IS NOT NULL
+AND orders.courier_uuid IS NULL
+AND orders.delivered_at IS NULL
+AND orders.courier_accepted_at IS NULL
+
+AND couriers.city = orders.delivery_address ->> 'city'
+;

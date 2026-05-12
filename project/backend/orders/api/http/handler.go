@@ -23,6 +23,10 @@ type ReadModel interface {
 	ListRestaurants(ctx context.Context) ([]Restaurant, error)
 	CustomerGetRestaurantMenu(ctx context.Context, restaurantUUID app.RestaurantUUID) ([]MenuItem, error)
 	CustomerGetRestaurant(ctx context.Context, restaurantUUID app.RestaurantUUID) (Restaurant, error)
+	ListCustomerOrders(ctx context.Context, customerUUID app.CustomerUUID) ([]CustomerOrder, error)
+	ListRestaurantOrders(ctx context.Context, restaurantUUID app.RestaurantUUID) ([]RestaurantOrder, error)
+	ListAssignedCourierOrders(ctx context.Context, courierUUID app.CourierUUID) ([]CourierOrder, error)
+	ListAvailableOrdersForCourier(ctx context.Context, courierUUID app.CourierUUID) ([]CourierOrder, error)
 }
 
 type RestaurantReader interface {
@@ -365,6 +369,48 @@ func (h Handler) CustomerGetRestaurantMenu(ctx context.Context, request Customer
 		Description:    restaurant.Description,
 		RestaurantUuid: request.RestaurantUuid,
 		Items:          menuItems,
+	}, nil
+}
+
+func (h Handler) CustomerGetOrders(ctx context.Context, request CustomerGetOrdersRequestObject) (CustomerGetOrdersResponseObject, error) {
+	orders, err := h.readModel.ListCustomerOrders(ctx, request.Params.CustomerUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	return CustomerGetOrders200JSONResponse{
+		Orders: orders,
+	}, nil
+}
+
+func (h Handler) RestaurantGetOrders(ctx context.Context, request RestaurantGetOrdersRequestObject) (RestaurantGetOrdersResponseObject, error) {
+	orders, err := h.readModel.ListRestaurantOrders(ctx, request.Params.RestaurantUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	return RestaurantGetOrders200JSONResponse{
+		Orders: orders,
+	}, nil
+}
+
+func (h Handler) CourierGetCurrentOrders(ctx context.Context, request CourierGetCurrentOrdersRequestObject) (CourierGetCurrentOrdersResponseObject, error) {
+	orders, err := h.readModel.ListAssignedCourierOrders(ctx, request.Params.CourierUUID)
+	if err != nil {
+		return nil, err
+	}
+	return CourierGetCurrentOrders200JSONResponse{
+		Orders: orders,
+	}, nil
+}
+
+func (h Handler) CourierGetAvailableOrders(ctx context.Context, request CourierGetAvailableOrdersRequestObject) (CourierGetAvailableOrdersResponseObject, error) {
+	orders, err := h.readModel.ListAvailableOrdersForCourier(ctx, request.Params.CourierUUID)
+	if err != nil {
+		return nil, err
+	}
+	return CourierGetAvailableOrders200JSONResponse{
+		Orders: orders,
 	}, nil
 }
 

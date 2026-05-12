@@ -63,6 +63,42 @@ type Address struct {
 // CountryCode Country code in ISO 3166-1 alpha-2 format
 type CountryCode = shared.CountryCode
 
+// CourierOrder defines model for CourierOrder.
+type CourierOrder struct {
+	// AcceptedByCourierAt When the courier accepted the order
+	AcceptedByCourierAt *time.Time   `json:"accepted_by_courier_at"`
+	CourierUuid         *CourierUUID `json:"courier_uuid"`
+
+	// CustomerUuid UUID of a customer
+	CustomerUuid CustomerUUID `json:"customer_uuid"`
+
+	// DeliveredAt When the order was delivered
+	DeliveredAt        *time.Time `json:"delivered_at"`
+	DeliveryAddress    Address    `json:"delivery_address"`
+	ItemsSubtotalGross Decimal    `json:"items_subtotal_gross"`
+
+	// OrderUuid UUID of an order
+	OrderUuid OrderUUID `json:"order_uuid"`
+
+	// OrderedAt When the order was placed
+	OrderedAt time.Time `json:"ordered_at"`
+
+	// PickedUpAt When the order was picked up
+	PickedUpAt *time.Time `json:"picked_up_at"`
+
+	// RestaurantConfirmedAt When the restaurant confirmed the order
+	RestaurantConfirmedAt *time.Time `json:"restaurant_confirmed_at"`
+
+	// RestaurantName Name of the restaurant
+	RestaurantName string `json:"restaurant_name"`
+
+	// RestaurantPreparedAt When the order was marked ready for pickup
+	RestaurantPreparedAt *time.Time `json:"restaurant_prepared_at"`
+
+	// RestaurantUuid UUID of a restaurant
+	RestaurantUuid RestaurantUUID `json:"restaurant_uuid"`
+}
+
 // CourierUUID UUID of a courier
 type CourierUUID = app.CourierUUID
 
@@ -304,6 +340,35 @@ type Restaurant struct {
 	Uuid RestaurantUUID `json:"uuid"`
 }
 
+// RestaurantOrder defines model for RestaurantOrder.
+type RestaurantOrder struct {
+	// CourierAcceptedAt When the courier accepted the order
+	CourierAcceptedAt *time.Time   `json:"courier_accepted_at"`
+	CourierUuid       *CourierUUID `json:"courier_uuid"`
+
+	// CustomerUuid UUID of a customer
+	CustomerUuid CustomerUUID `json:"customer_uuid"`
+
+	// DeliveredAt When the order was delivered
+	DeliveredAt        *time.Time `json:"delivered_at"`
+	ItemsSubtotalGross Decimal    `json:"items_subtotal_gross"`
+
+	// OrderUuid UUID of an order
+	OrderUuid OrderUUID `json:"order_uuid"`
+
+	// OrderedAt When the order was placed
+	OrderedAt time.Time `json:"ordered_at"`
+
+	// PickedUpAt When the order was picked up
+	PickedUpAt *time.Time `json:"picked_up_at"`
+
+	// RestaurantConfirmedAt When the restaurant confirmed the order
+	RestaurantConfirmedAt *time.Time `json:"restaurant_confirmed_at"`
+
+	// RestaurantPreparedAt When the order was marked ready for pickup
+	RestaurantPreparedAt *time.Time `json:"restaurant_prepared_at"`
+}
+
 // RestaurantUUID UUID of a restaurant
 type RestaurantUUID = app.RestaurantUUID
 
@@ -331,6 +396,18 @@ type CourierAcceptDeliveryParams struct {
 	CourierUUID CourierUUID `json:"Courier-UUID"`
 }
 
+// CourierGetAvailableOrdersParams defines parameters for CourierGetAvailableOrders.
+type CourierGetAvailableOrdersParams struct {
+	// CourierUUID Courier UUID
+	CourierUUID CourierUUID `json:"Courier-UUID"`
+}
+
+// CourierGetCurrentOrdersParams defines parameters for CourierGetCurrentOrders.
+type CourierGetCurrentOrdersParams struct {
+	// CourierUUID Courier UUID
+	CourierUUID CourierUUID `json:"Courier-UUID"`
+}
+
 // CourierReportDeliveryParams defines parameters for CourierReportDelivery.
 type CourierReportDeliveryParams struct {
 	// CourierUUID Courier UUID
@@ -345,6 +422,12 @@ type CourierReportPickupParams struct {
 
 // CustomerCreateQuoteParams defines parameters for CustomerCreateQuote.
 type CustomerCreateQuoteParams struct {
+	// CustomerUUID Customer UUID
+	CustomerUUID CustomerUUID `json:"Customer-UUID"`
+}
+
+// CustomerGetOrdersParams defines parameters for CustomerGetOrders.
+type CustomerGetOrdersParams struct {
 	// CustomerUUID Customer UUID
 	CustomerUUID CustomerUUID `json:"Customer-UUID"`
 }
@@ -382,6 +465,12 @@ type RestaurantMarkOrderReadyForPickupParams struct {
 // OnboardRestaurantParams defines parameters for OnboardRestaurant.
 type OnboardRestaurantParams struct {
 	OperatorUUID OperatorUUID `json:"Operator-UUID"`
+}
+
+// RestaurantGetOrdersParams defines parameters for RestaurantGetOrders.
+type RestaurantGetOrdersParams struct {
+	// RestaurantUUID Restaurant UUID
+	RestaurantUUID RestaurantUUID `json:"Restaurant-UUID"`
 }
 
 // ListMenuItemsParams defines parameters for ListMenuItems.
@@ -434,6 +523,12 @@ type ServerInterface interface {
 	// Courier accepts delivery job
 	// (POST /orders/courier/accept-delivery)
 	CourierAcceptDelivery(ctx echo.Context, params CourierAcceptDeliveryParams) error
+	// List orders available for delivery
+	// (GET /orders/courier/available-orders)
+	CourierGetAvailableOrders(ctx echo.Context, params CourierGetAvailableOrdersParams) error
+	// List current orders assigned to courier
+	// (GET /orders/courier/current-orders)
+	CourierGetCurrentOrders(ctx echo.Context, params CourierGetCurrentOrdersParams) error
 	// Courier reports successful delivery
 	// (POST /orders/courier/report-delivery)
 	CourierReportDelivery(ctx echo.Context, params CourierReportDeliveryParams) error
@@ -443,6 +538,9 @@ type ServerInterface interface {
 	// Create order quote
 	// (POST /orders/customer/create-quote)
 	CustomerCreateQuote(ctx echo.Context, params CustomerCreateQuoteParams) error
+	// List customer orders
+	// (GET /orders/customer/orders)
+	CustomerGetOrders(ctx echo.Context, params CustomerGetOrdersParams) error
 	// Place a new order using an order offer
 	// (POST /orders/customer/place-order)
 	CustomerPlaceOrder(ctx echo.Context, params CustomerPlaceOrderParams) error
@@ -467,6 +565,9 @@ type ServerInterface interface {
 	// Onboard or replace a restaurant with full details
 	// (PUT /orders/restaurant/onboard/{restaurant_uuid})
 	OnboardRestaurant(ctx echo.Context, restaurantUuid RestaurantUUID, params OnboardRestaurantParams) error
+	// List orders for restaurant
+	// (GET /orders/restaurant/orders)
+	RestaurantGetOrders(ctx echo.Context, params RestaurantGetOrdersParams) error
 	// List all menu items with restaurant info
 	// (GET /orders/restaurants/menu-items)
 	ListMenuItems(ctx echo.Context, params ListMenuItemsParams) error
@@ -505,6 +606,68 @@ func (w *ServerInterfaceWrapper) CourierAcceptDelivery(ctx echo.Context) error {
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.CourierAcceptDelivery(ctx, params)
+	return err
+}
+
+// CourierGetAvailableOrders converts echo context to params.
+func (w *ServerInterfaceWrapper) CourierGetAvailableOrders(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CourierGetAvailableOrdersParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Courier-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Courier-UUID")]; found {
+		var CourierUUID CourierUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Courier-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Courier-UUID", valueList[0], &CourierUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Courier-UUID: %s", err))
+		}
+
+		params.CourierUUID = CourierUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Courier-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.CourierGetAvailableOrders(ctx, params)
+	return err
+}
+
+// CourierGetCurrentOrders converts echo context to params.
+func (w *ServerInterfaceWrapper) CourierGetCurrentOrders(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CourierGetCurrentOrdersParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Courier-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Courier-UUID")]; found {
+		var CourierUUID CourierUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Courier-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Courier-UUID", valueList[0], &CourierUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Courier-UUID: %s", err))
+		}
+
+		params.CourierUUID = CourierUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Courier-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.CourierGetCurrentOrders(ctx, params)
 	return err
 }
 
@@ -598,6 +761,37 @@ func (w *ServerInterfaceWrapper) CustomerCreateQuote(ctx echo.Context) error {
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.CustomerCreateQuote(ctx, params)
+	return err
+}
+
+// CustomerGetOrders converts echo context to params.
+func (w *ServerInterfaceWrapper) CustomerGetOrders(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CustomerGetOrdersParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Customer-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Customer-UUID")]; found {
+		var CustomerUUID CustomerUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Customer-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Customer-UUID", valueList[0], &CustomerUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Customer-UUID: %s", err))
+		}
+
+		params.CustomerUUID = CustomerUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Customer-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.CustomerGetOrders(ctx, params)
 	return err
 }
 
@@ -819,6 +1013,37 @@ func (w *ServerInterfaceWrapper) OnboardRestaurant(ctx echo.Context) error {
 	return err
 }
 
+// RestaurantGetOrders converts echo context to params.
+func (w *ServerInterfaceWrapper) RestaurantGetOrders(ctx echo.Context) error {
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RestaurantGetOrdersParams
+
+	headers := ctx.Request().Header
+	// ------------- Required header parameter "Restaurant-UUID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Restaurant-UUID")]; found {
+		var RestaurantUUID RestaurantUUID
+		n := len(valueList)
+		if n != 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Expected one value for Restaurant-UUID, got %d", n))
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Restaurant-UUID", valueList[0], &RestaurantUUID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true})
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter Restaurant-UUID: %s", err))
+		}
+
+		params.RestaurantUUID = RestaurantUUID
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Header parameter Restaurant-UUID is required, but not found"))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.RestaurantGetOrders(ctx, params)
+	return err
+}
+
 // ListMenuItems converts echo context to params.
 func (w *ServerInterfaceWrapper) ListMenuItems(ctx echo.Context) error {
 	var err error
@@ -880,9 +1105,12 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 	}
 
 	router.POST(baseURL+"/orders/courier/accept-delivery", wrapper.CourierAcceptDelivery)
+	router.GET(baseURL+"/orders/courier/available-orders", wrapper.CourierGetAvailableOrders)
+	router.GET(baseURL+"/orders/courier/current-orders", wrapper.CourierGetCurrentOrders)
 	router.POST(baseURL+"/orders/courier/report-delivery", wrapper.CourierReportDelivery)
 	router.POST(baseURL+"/orders/courier/report-pickup", wrapper.CourierReportPickup)
 	router.POST(baseURL+"/orders/customer/create-quote", wrapper.CustomerCreateQuote)
+	router.GET(baseURL+"/orders/customer/orders", wrapper.CustomerGetOrders)
 	router.POST(baseURL+"/orders/customer/place-order", wrapper.CustomerPlaceOrder)
 	router.GET(baseURL+"/orders/customer/restaurants", wrapper.CustomerListRestaurants)
 	router.GET(baseURL+"/orders/customer/:restaurant_uuid/menu", wrapper.CustomerGetRestaurantMenu)
@@ -891,6 +1119,7 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 	router.POST(baseURL+"/orders/restaurant/accept-order", wrapper.RestaurantAcceptOrder)
 	router.POST(baseURL+"/orders/restaurant/mark-order-ready-for-pickup", wrapper.RestaurantMarkOrderReadyForPickup)
 	router.PUT(baseURL+"/orders/restaurant/onboard/:restaurant_uuid", wrapper.OnboardRestaurant)
+	router.GET(baseURL+"/orders/restaurant/orders", wrapper.RestaurantGetOrders)
 	router.GET(baseURL+"/orders/restaurants/menu-items", wrapper.ListMenuItems)
 
 }
@@ -965,6 +1194,62 @@ type CourierAcceptDelivery409JSONResponse struct{ ConflictJSONResponse }
 func (response CourierAcceptDelivery409JSONResponse) VisitCourierAcceptDeliveryResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierGetAvailableOrdersRequestObject struct {
+	Params CourierGetAvailableOrdersParams
+}
+
+type CourierGetAvailableOrdersResponseObject interface {
+	VisitCourierGetAvailableOrdersResponse(w http.ResponseWriter) error
+}
+
+type CourierGetAvailableOrders200JSONResponse struct {
+	Orders []CourierOrder `json:"orders"`
+}
+
+func (response CourierGetAvailableOrders200JSONResponse) VisitCourierGetAvailableOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierGetAvailableOrders401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CourierGetAvailableOrders401JSONResponse) VisitCourierGetAvailableOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierGetCurrentOrdersRequestObject struct {
+	Params CourierGetCurrentOrdersParams
+}
+
+type CourierGetCurrentOrdersResponseObject interface {
+	VisitCourierGetCurrentOrdersResponse(w http.ResponseWriter) error
+}
+
+type CourierGetCurrentOrders200JSONResponse struct {
+	Orders []CourierOrder `json:"orders"`
+}
+
+func (response CourierGetCurrentOrders200JSONResponse) VisitCourierGetCurrentOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CourierGetCurrentOrders401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CourierGetCurrentOrders401JSONResponse) VisitCourierGetCurrentOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
 
 	return json.NewEncoder(w).Encode(response)
 }
@@ -1132,6 +1417,70 @@ func (response CustomerCreateQuote404JSONResponse) VisitCustomerCreateQuoteRespo
 type CustomerCreateQuote410JSONResponse struct{ GoneJSONResponse }
 
 func (response CustomerCreateQuote410JSONResponse) VisitCustomerCreateQuoteResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CustomerGetOrdersRequestObject struct {
+	Params CustomerGetOrdersParams
+}
+
+type CustomerGetOrdersResponseObject interface {
+	VisitCustomerGetOrdersResponse(w http.ResponseWriter) error
+}
+
+type CustomerGetOrders200JSONResponse struct {
+	Orders []CustomerOrder `json:"orders"`
+}
+
+func (response CustomerGetOrders200JSONResponse) VisitCustomerGetOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CustomerGetOrders400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CustomerGetOrders400JSONResponse) VisitCustomerGetOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CustomerGetOrders401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CustomerGetOrders401JSONResponse) VisitCustomerGetOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CustomerGetOrders403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response CustomerGetOrders403JSONResponse) VisitCustomerGetOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CustomerGetOrders404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response CustomerGetOrders404JSONResponse) VisitCustomerGetOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CustomerGetOrders410JSONResponse struct{ GoneJSONResponse }
+
+func (response CustomerGetOrders410JSONResponse) VisitCustomerGetOrdersResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(410)
 
@@ -1488,6 +1837,34 @@ func (response OnboardRestaurant403JSONResponse) VisitOnboardRestaurantResponse(
 	return json.NewEncoder(w).Encode(response)
 }
 
+type RestaurantGetOrdersRequestObject struct {
+	Params RestaurantGetOrdersParams
+}
+
+type RestaurantGetOrdersResponseObject interface {
+	VisitRestaurantGetOrdersResponse(w http.ResponseWriter) error
+}
+
+type RestaurantGetOrders200JSONResponse struct {
+	Orders []RestaurantOrder `json:"orders"`
+}
+
+func (response RestaurantGetOrders200JSONResponse) VisitRestaurantGetOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type RestaurantGetOrders401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RestaurantGetOrders401JSONResponse) VisitRestaurantGetOrdersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type ListMenuItemsRequestObject struct {
 	Params ListMenuItemsParams
 }
@@ -1510,6 +1887,12 @@ type StrictServerInterface interface {
 	// Courier accepts delivery job
 	// (POST /orders/courier/accept-delivery)
 	CourierAcceptDelivery(ctx context.Context, request CourierAcceptDeliveryRequestObject) (CourierAcceptDeliveryResponseObject, error)
+	// List orders available for delivery
+	// (GET /orders/courier/available-orders)
+	CourierGetAvailableOrders(ctx context.Context, request CourierGetAvailableOrdersRequestObject) (CourierGetAvailableOrdersResponseObject, error)
+	// List current orders assigned to courier
+	// (GET /orders/courier/current-orders)
+	CourierGetCurrentOrders(ctx context.Context, request CourierGetCurrentOrdersRequestObject) (CourierGetCurrentOrdersResponseObject, error)
 	// Courier reports successful delivery
 	// (POST /orders/courier/report-delivery)
 	CourierReportDelivery(ctx context.Context, request CourierReportDeliveryRequestObject) (CourierReportDeliveryResponseObject, error)
@@ -1519,6 +1902,9 @@ type StrictServerInterface interface {
 	// Create order quote
 	// (POST /orders/customer/create-quote)
 	CustomerCreateQuote(ctx context.Context, request CustomerCreateQuoteRequestObject) (CustomerCreateQuoteResponseObject, error)
+	// List customer orders
+	// (GET /orders/customer/orders)
+	CustomerGetOrders(ctx context.Context, request CustomerGetOrdersRequestObject) (CustomerGetOrdersResponseObject, error)
 	// Place a new order using an order offer
 	// (POST /orders/customer/place-order)
 	CustomerPlaceOrder(ctx context.Context, request CustomerPlaceOrderRequestObject) (CustomerPlaceOrderResponseObject, error)
@@ -1543,6 +1929,9 @@ type StrictServerInterface interface {
 	// Onboard or replace a restaurant with full details
 	// (PUT /orders/restaurant/onboard/{restaurant_uuid})
 	OnboardRestaurant(ctx context.Context, request OnboardRestaurantRequestObject) (OnboardRestaurantResponseObject, error)
+	// List orders for restaurant
+	// (GET /orders/restaurant/orders)
+	RestaurantGetOrders(ctx context.Context, request RestaurantGetOrdersRequestObject) (RestaurantGetOrdersResponseObject, error)
 	// List all menu items with restaurant info
 	// (GET /orders/restaurants/menu-items)
 	ListMenuItems(ctx context.Context, request ListMenuItemsRequestObject) (ListMenuItemsResponseObject, error)
@@ -1585,6 +1974,56 @@ func (sh *strictHandler) CourierAcceptDelivery(ctx echo.Context, params CourierA
 		return err
 	} else if validResponse, ok := response.(CourierAcceptDeliveryResponseObject); ok {
 		return validResponse.VisitCourierAcceptDeliveryResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// CourierGetAvailableOrders operation middleware
+func (sh *strictHandler) CourierGetAvailableOrders(ctx echo.Context, params CourierGetAvailableOrdersParams) error {
+	var request CourierGetAvailableOrdersRequestObject
+
+	request.Params = params
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.CourierGetAvailableOrders(ctx.Request().Context(), request.(CourierGetAvailableOrdersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CourierGetAvailableOrders")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(CourierGetAvailableOrdersResponseObject); ok {
+		return validResponse.VisitCourierGetAvailableOrdersResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// CourierGetCurrentOrders operation middleware
+func (sh *strictHandler) CourierGetCurrentOrders(ctx echo.Context, params CourierGetCurrentOrdersParams) error {
+	var request CourierGetCurrentOrdersRequestObject
+
+	request.Params = params
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.CourierGetCurrentOrders(ctx.Request().Context(), request.(CourierGetCurrentOrdersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CourierGetCurrentOrders")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(CourierGetCurrentOrdersResponseObject); ok {
+		return validResponse.VisitCourierGetCurrentOrdersResponse(ctx.Response())
 	} else if response != nil {
 		return fmt.Errorf("unexpected response type: %T", response)
 	}
@@ -1678,6 +2117,31 @@ func (sh *strictHandler) CustomerCreateQuote(ctx echo.Context, params CustomerCr
 		return err
 	} else if validResponse, ok := response.(CustomerCreateQuoteResponseObject); ok {
 		return validResponse.VisitCustomerCreateQuoteResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// CustomerGetOrders operation middleware
+func (sh *strictHandler) CustomerGetOrders(ctx echo.Context, params CustomerGetOrdersParams) error {
+	var request CustomerGetOrdersRequestObject
+
+	request.Params = params
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.CustomerGetOrders(ctx.Request().Context(), request.(CustomerGetOrdersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CustomerGetOrders")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(CustomerGetOrdersResponseObject); ok {
+		return validResponse.VisitCustomerGetOrdersResponse(ctx.Response())
 	} else if response != nil {
 		return fmt.Errorf("unexpected response type: %T", response)
 	}
@@ -1912,6 +2376,31 @@ func (sh *strictHandler) OnboardRestaurant(ctx echo.Context, restaurantUuid Rest
 		return err
 	} else if validResponse, ok := response.(OnboardRestaurantResponseObject); ok {
 		return validResponse.VisitOnboardRestaurantResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// RestaurantGetOrders operation middleware
+func (sh *strictHandler) RestaurantGetOrders(ctx echo.Context, params RestaurantGetOrdersParams) error {
+	var request RestaurantGetOrdersRequestObject
+
+	request.Params = params
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.RestaurantGetOrders(ctx.Request().Context(), request.(RestaurantGetOrdersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RestaurantGetOrders")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(RestaurantGetOrdersResponseObject); ok {
+		return validResponse.VisitRestaurantGetOrdersResponse(ctx.Response())
 	} else if response != nil {
 		return fmt.Errorf("unexpected response type: %T", response)
 	}

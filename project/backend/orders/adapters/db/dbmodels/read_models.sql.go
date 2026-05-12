@@ -7,11 +7,200 @@ package dbmodels
 
 import (
 	"context"
+	"time"
 
 	"eats/backend/common/shared"
 	"eats/backend/orders/app"
 	"github.com/shopspring/decimal"
 )
+
+const listAssignedCourierOrders = `-- name: ListAssignedCourierOrders :many
+SELECT orders.order_uuid, orders.quote_uuid, orders.customer_uuid, orders.restaurant_uuid, orders.courier_uuid, orders.delivery_address, orders.ordered_at, orders.restaurant_confirmed_at, orders.courier_accepted_at, orders.restaurant_prepared_at, orders.picked_up_at, orders.delivered_at, orders.items_subtotal_gross, orders.service_fee_gross, orders.delivery_fee_gross, orders.total_amount_gross, orders.total_tax, orders.currency, restaurants.name AS restaurant_name FROM orders.orders as orders
+INNER JOIN orders.restaurants ON orders.restaurant_uuid = restaurants.restaurant_uuid
+WHERE courier_uuid = $1
+`
+
+type ListAssignedCourierOrdersRow struct {
+	OrderUuid             app.OrderUUID
+	QuoteUuid             app.QuoteUUID
+	CustomerUuid          app.CustomerUUID
+	RestaurantUuid        app.RestaurantUUID
+	CourierUuid           *app.CourierUUID
+	DeliveryAddress       shared.Address
+	OrderedAt             time.Time
+	RestaurantConfirmedAt *time.Time
+	CourierAcceptedAt     *time.Time
+	RestaurantPreparedAt  *time.Time
+	PickedUpAt            *time.Time
+	DeliveredAt           *time.Time
+	ItemsSubtotalGross    decimal.Decimal
+	ServiceFeeGross       decimal.Decimal
+	DeliveryFeeGross      decimal.Decimal
+	TotalAmountGross      decimal.Decimal
+	TotalTax              decimal.Decimal
+	Currency              shared.Currency
+	RestaurantName        string
+}
+
+func (q *Queries) ListAssignedCourierOrders(ctx context.Context, courierUuid *app.CourierUUID) ([]ListAssignedCourierOrdersRow, error) {
+	rows, err := q.db.Query(ctx, listAssignedCourierOrders, courierUuid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAssignedCourierOrdersRow{}
+	for rows.Next() {
+		var i ListAssignedCourierOrdersRow
+		if err := rows.Scan(
+			&i.OrderUuid,
+			&i.QuoteUuid,
+			&i.CustomerUuid,
+			&i.RestaurantUuid,
+			&i.CourierUuid,
+			&i.DeliveryAddress,
+			&i.OrderedAt,
+			&i.RestaurantConfirmedAt,
+			&i.CourierAcceptedAt,
+			&i.RestaurantPreparedAt,
+			&i.PickedUpAt,
+			&i.DeliveredAt,
+			&i.ItemsSubtotalGross,
+			&i.ServiceFeeGross,
+			&i.DeliveryFeeGross,
+			&i.TotalAmountGross,
+			&i.TotalTax,
+			&i.Currency,
+			&i.RestaurantName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAvailableOrdersForCourier = `-- name: ListAvailableOrdersForCourier :many
+SELECT orders.order_uuid, orders.quote_uuid, orders.customer_uuid, orders.restaurant_uuid, orders.courier_uuid, orders.delivery_address, orders.ordered_at, orders.restaurant_confirmed_at, orders.courier_accepted_at, orders.restaurant_prepared_at, orders.picked_up_at, orders.delivered_at, orders.items_subtotal_gross, orders.service_fee_gross, orders.delivery_fee_gross, orders.total_amount_gross, orders.total_tax, orders.currency , restaurants.name AS restaurant_name
+FROM orders.orders as orders
+INNER JOIN orders.couriers ON couriers.courier_uuid = $1
+INNER JOIN orders.restaurants ON orders.restaurant_uuid = restaurants.restaurant_uuid
+WHERE orders.restaurant_confirmed_at IS NOT NULL
+AND orders.courier_uuid IS NULL
+AND orders.delivered_at IS NULL
+AND orders.courier_accepted_at IS NULL
+
+AND couriers.city = orders.delivery_address ->> 'city'
+`
+
+type ListAvailableOrdersForCourierRow struct {
+	OrderUuid             app.OrderUUID
+	QuoteUuid             app.QuoteUUID
+	CustomerUuid          app.CustomerUUID
+	RestaurantUuid        app.RestaurantUUID
+	CourierUuid           *app.CourierUUID
+	DeliveryAddress       shared.Address
+	OrderedAt             time.Time
+	RestaurantConfirmedAt *time.Time
+	CourierAcceptedAt     *time.Time
+	RestaurantPreparedAt  *time.Time
+	PickedUpAt            *time.Time
+	DeliveredAt           *time.Time
+	ItemsSubtotalGross    decimal.Decimal
+	ServiceFeeGross       decimal.Decimal
+	DeliveryFeeGross      decimal.Decimal
+	TotalAmountGross      decimal.Decimal
+	TotalTax              decimal.Decimal
+	Currency              shared.Currency
+	RestaurantName        string
+}
+
+func (q *Queries) ListAvailableOrdersForCourier(ctx context.Context, courierUuid app.CourierUUID) ([]ListAvailableOrdersForCourierRow, error) {
+	rows, err := q.db.Query(ctx, listAvailableOrdersForCourier, courierUuid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAvailableOrdersForCourierRow{}
+	for rows.Next() {
+		var i ListAvailableOrdersForCourierRow
+		if err := rows.Scan(
+			&i.OrderUuid,
+			&i.QuoteUuid,
+			&i.CustomerUuid,
+			&i.RestaurantUuid,
+			&i.CourierUuid,
+			&i.DeliveryAddress,
+			&i.OrderedAt,
+			&i.RestaurantConfirmedAt,
+			&i.CourierAcceptedAt,
+			&i.RestaurantPreparedAt,
+			&i.PickedUpAt,
+			&i.DeliveredAt,
+			&i.ItemsSubtotalGross,
+			&i.ServiceFeeGross,
+			&i.DeliveryFeeGross,
+			&i.TotalAmountGross,
+			&i.TotalTax,
+			&i.Currency,
+			&i.RestaurantName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomerOrders = `-- name: ListCustomerOrders :many
+SELECT orders.order_uuid, orders.quote_uuid, orders.customer_uuid, orders.restaurant_uuid, orders.courier_uuid, orders.delivery_address, orders.ordered_at, orders.restaurant_confirmed_at, orders.courier_accepted_at, orders.restaurant_prepared_at, orders.picked_up_at, orders.delivered_at, orders.items_subtotal_gross, orders.service_fee_gross, orders.delivery_fee_gross, orders.total_amount_gross, orders.total_tax, orders.currency FROM orders.orders as orders
+WHERE customer_uuid = $1
+ORDER BY orders.ordered_at DESC
+`
+
+func (q *Queries) ListCustomerOrders(ctx context.Context, customerUuid app.CustomerUUID) ([]OrdersOrder, error) {
+	rows, err := q.db.Query(ctx, listCustomerOrders, customerUuid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrdersOrder{}
+	for rows.Next() {
+		var i OrdersOrder
+		if err := rows.Scan(
+			&i.OrderUuid,
+			&i.QuoteUuid,
+			&i.CustomerUuid,
+			&i.RestaurantUuid,
+			&i.CourierUuid,
+			&i.DeliveryAddress,
+			&i.OrderedAt,
+			&i.RestaurantConfirmedAt,
+			&i.CourierAcceptedAt,
+			&i.RestaurantPreparedAt,
+			&i.PickedUpAt,
+			&i.DeliveredAt,
+			&i.ItemsSubtotalGross,
+			&i.ServiceFeeGross,
+			&i.DeliveryFeeGross,
+			&i.TotalAmountGross,
+			&i.TotalTax,
+			&i.Currency,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
 const listMenuItemsWithRestaurant = `-- name: ListMenuItemsWithRestaurant :many
 SELECT
@@ -98,13 +287,57 @@ func (q *Queries) ListMenuItemsWithRestaurant(ctx context.Context, arg ListMenuI
 	return items, nil
 }
 
+const listRestaurantOrders = `-- name: ListRestaurantOrders :many
+SELECT orders.order_uuid, orders.quote_uuid, orders.customer_uuid, orders.restaurant_uuid, orders.courier_uuid, orders.delivery_address, orders.ordered_at, orders.restaurant_confirmed_at, orders.courier_accepted_at, orders.restaurant_prepared_at, orders.picked_up_at, orders.delivered_at, orders.items_subtotal_gross, orders.service_fee_gross, orders.delivery_fee_gross, orders.total_amount_gross, orders.total_tax, orders.currency FROM orders.orders as orders
+WHERE restaurant_uuid = $1
+`
+
+func (q *Queries) ListRestaurantOrders(ctx context.Context, restaurantUuid app.RestaurantUUID) ([]OrdersOrder, error) {
+	rows, err := q.db.Query(ctx, listRestaurantOrders, restaurantUuid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrdersOrder{}
+	for rows.Next() {
+		var i OrdersOrder
+		if err := rows.Scan(
+			&i.OrderUuid,
+			&i.QuoteUuid,
+			&i.CustomerUuid,
+			&i.RestaurantUuid,
+			&i.CourierUuid,
+			&i.DeliveryAddress,
+			&i.OrderedAt,
+			&i.RestaurantConfirmedAt,
+			&i.CourierAcceptedAt,
+			&i.RestaurantPreparedAt,
+			&i.PickedUpAt,
+			&i.DeliveredAt,
+			&i.ItemsSubtotalGross,
+			&i.ServiceFeeGross,
+			&i.DeliveryFeeGross,
+			&i.TotalAmountGross,
+			&i.TotalTax,
+			&i.Currency,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRestaurants = `-- name: ListRestaurants :many
 SELECT
     restaurant_uuid,
     name,
     description,
-     address,
-     currency
+    address,
+    currency
 FROM orders.restaurants
 ORDER BY name ASC
 `
